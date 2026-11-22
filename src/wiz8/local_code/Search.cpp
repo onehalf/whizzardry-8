@@ -25,6 +25,7 @@
 #include "wiz8/level_population.h"
 #include "wiz8/level_specific_code/level_script.h"
 #include "wiz8/loaded_game_data.h"
+#include "wiz8/local_code/Configuration.h"
 #include "wiz8/local_code/PC_Item.h"
 #include "wiz8/local_code/character_events.h"
 #include "wiz8/local_screens/MGSTextBox.h"
@@ -219,7 +220,10 @@ static void RunSearchPulse(bool searching)
                 }
             }
         }
-        if (searching && !IsLevelFastMovement() && !found && CurrentGame().rng.below(100) == 0) {
+        // The idle "nothing found" bark is chatter, so the confirmations option
+        // silences it. The roll still happens to keep the random sequence.
+        if (searching && !IsLevelFastMovement() && !found && CurrentGame().rng.below(100) == 0 &&
+            g_settings.pc_confirmations) {
             CurrentGame().speech.QueueRandom(g_container_event, -1, 0);
         }
     }
