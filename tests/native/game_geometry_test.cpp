@@ -20,8 +20,10 @@
 
 #include <SDL3/SDL_pixels.h>
 #include <SDL3/SDL_surface.h>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/matrix.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtx/euler_angles.hpp>
 #include <vsg/app/Camera.h>
@@ -619,7 +621,7 @@ TEST_CASE("Inclusive cell boxes retain order clipping and extreme endpoints", "[
     REQUIRE(cells == std::vector<glm::ivec3>{extreme});
 }
 
-TEST_CASE("Ground shadow projection retains rotated scale center and coordinate axis order",
+TEST_CASE("Ground shadow projection is a rotated scale about the shadow center",
           "[geometry][rendering]")
 {
     const glm::vec3 center(10, 0, 20), vertex(12, 4, 25);
@@ -628,9 +630,13 @@ TEST_CASE("Ground shadow projection retains rotated scale center and coordinate 
         const auto coordinates = projection.coordinates(vertex);
         const float cosine = std::cos(-angle), sine = std::sin(-angle);
         const glm::vec2 expected(0.125f * (5 * cosine - 2 * sine) + 0.5f,
-                                 0.25f * (2 * sine + 5 * cosine) + 0.5f);
+                                 0.25f * (5 * sine + 2 * cosine) + 0.5f);
         REQUIRE(glm::distance(coordinates, expected) < 1e-5f);
         REQUIRE(projection.coordinates(center) == glm::vec2(0.5f));
+        // Retail's swapped axes collapsed the blob to a stripe at axis-aligned
+        // facings; the footprint area must not depend on the facing.
+        REQUIRE(std::abs(glm::determinant(projection.matrix)) ==
+                Catch::Approx(0.125f * 0.25f).epsilon(1e-5));
     }
 }
 

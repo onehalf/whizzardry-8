@@ -33,9 +33,10 @@ struct GroundShadowProjection {
         const float cosine = std::cos(-angle), sine = std::sin(-angle);
         const glm::mat2 rotation(cosine, sine, -sine, cosine);
         const glm::mat2 scale(0.5f / width, 0, 0, 0.5f / depth);
-        const auto transform = scale * rotation;
-        // The original second coordinate exchanges x/z relative to the first.
-        matrix = glm::mat2(transform[0][0], transform[1][1], transform[1][0], transform[0][1]);
+        // Retail paired the second coordinate's x/z terms the other way round,
+        // which collapses the projection (determinant ~ sin 2*angle) and smears
+        // the blob into a long stripe whenever a monster faces along an axis.
+        matrix = scale * rotation;
     }
 
     glm::vec2 coordinates(const glm::vec3& position) const
