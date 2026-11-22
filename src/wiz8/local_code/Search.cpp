@@ -220,10 +220,9 @@ static void RunSearchPulse(bool searching)
                 }
             }
         }
-        // The idle "nothing found" bark is chatter, so the confirmations option
-        // silences it. The roll still happens to keep the random sequence.
+        // The roll still happens when the bark is off, keeping the random sequence.
         if (searching && !IsLevelFastMovement() && !found && CurrentGame().rng.below(100) == 0 &&
-            g_settings.pc_confirmations) {
+            g_settings.search_barks) {
             CurrentGame().speech.QueueRandom(g_container_event, -1, 0);
         }
     }

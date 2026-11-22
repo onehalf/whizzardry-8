@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <exception>
 #include <span>
 #include <stdexcept>
@@ -26,6 +27,8 @@ static char g_config_file_extension[] = "CFG";
 constexpr unsigned int W8_CHUNK_SETTINGS = W8ChunkId("CNFG");
 constexpr unsigned int W8_CHUNK_RENDER_OPTIONS = W8ChunkId("QLTY");
 constexpr unsigned int W8_CHUNK_KEY_BINDINGS = W8ChunkId("KEYM");
+// Whizzardry-only settings; retail never wrote this chunk.
+constexpr unsigned int W8_CHUNK_NATIVE_SETTINGS = W8ChunkId("WHZ8");
 
 namespace wiz8::retail {
 // The CNFG record.
@@ -212,6 +215,7 @@ void LoadGameConfiguration(void)
     std::string path;
     bool loaded = false;
     bool reset = true;
+    std::optional<bool> search_barks;
 
     path = fmt::format("{}.{}", g_config_file_name, g_config_file_extension);
     ResetMGSKeyboardBindings();
@@ -230,6 +234,8 @@ void LoadGameConfiguration(void)
                 g_mgs_keyboard.Load(file, false);
             } else if (id == W8_CHUNK_RENDER_OPTIONS) {
                 LoadRenderOptions(file);
+            } else if (id == W8_CHUNK_NATIVE_SETTINGS && file.RemainingBytes() >= 1) {
+                search_barks = file.ReadValue<std::uint8_t>() != 0;
             }
         });
         file.Close();
@@ -240,6 +246,8 @@ void LoadGameConfiguration(void)
         static_cast<unsigned int>(g_settings.difficulty) <= W8_DIFFICULTY_EXPERT) {
         reset = false;
     }
+    // Decoding CNFG replaces the whole record, so apply native settings after it.
+    if (search_barks) g_settings.search_barks = *search_barks;
     if (reset) {
         ResetGameplaySettings();
         SaveGameConfiguration();
@@ -266,6 +274,10 @@ try {
     });
     file.WriteChunk(W8_CHUNK_RENDER_OPTIONS, [&] { SaveRenderOptions(file.WriteStream()); });
     file.WriteChunk(W8_CHUNK_KEY_BINDINGS, [&] { g_mgs_keyboard.Save(file.WriteStream()); });
+    file.WriteChunk(W8_CHUNK_NATIVE_SETTINGS, [&] {
+        const auto search_barks = static_cast<std::byte>(g_settings.search_barks);
+        file.WriteBytes(&search_barks, 1);
+    });
     file.Close();
     return true;
 } catch (const std::exception&) {

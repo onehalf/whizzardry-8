@@ -49,6 +49,9 @@ struct W8GameSettings {
     bool smooth_world_animations;   /* options string 0x81a */
     bool pc_confirmations; /* options string 0x823 */
     bool pc_subtitles; /* options string 0x824 */
+    /* Native option, saved in its own WHZ8 chunk rather than the CNFG record: the
+       random "nothing found" bark while search mode sweeps an empty area. */
+    bool search_barks = true;
     unsigned char field_000;
     unsigned char unknown_002[0x4];
     /* The player's preferred main-game layout. An open interaction overrides

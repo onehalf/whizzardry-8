@@ -196,6 +196,7 @@ void ResetGameplaySettings(void)
     g_settings.legacy_gamma = 1.0f;
     g_settings.pc_confirmations = true;
     g_settings.pc_subtitles = true;
+    g_settings.search_barks = true;
     g_settings.mouselook_toggle = false;
     g_settings.mouselook_smoothing = true;
     g_settings.numeric_hit_points = true;

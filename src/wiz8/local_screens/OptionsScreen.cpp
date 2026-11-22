@@ -71,11 +71,21 @@
 // GLOBAL: WIZ8 0x0069c254
 std::string g_options_last_save_name;
 
-static void AddOptionsLabel(W8OptionsPanel& panel, int label);
+static void AddOptionsLabel(W8OptionsPanel& panel, std::string_view label);
+
+void W8OptionsPanel::AddCheckbox(std::string_view label, bool* value)
+{
+    AddCheckbox(label, *value, [value](bool selected) { *value = selected; });
+}
 
 void W8OptionsPanel::AddCheckbox(int label, bool* value)
 {
-    AddCheckbox(label, *value, [value](bool selected) { *value = selected; });
+    AddCheckbox(std::string_view(Data().strings[label]), value);
+}
+
+void W8OptionsPanel::AddCheckbox(int label, bool selected, std::function<void(bool)> changed)
+{
+    AddCheckbox(std::string_view(Data().strings[label]), selected, std::move(changed));
 }
 
 template<typename T>
@@ -88,7 +98,7 @@ void W8OptionsPanel::AddChoices(int label, int count, const int* choices, T* val
 void W8OptionsPanel::AddChoices(int label, int count, const int* choices, int selected,
                                 std::function<void(int)> changed)
 {
-    AddOptionsLabel(*this, label);
+    AddOptionsLabel(*this, Data().strings[label]);
     const auto first = m_buttons.size();
     for (int index = 0; index < count; ++index) {
         auto* button = AddChoiceButton(choices[index], [this, first, count, index, changed](auto*) {
@@ -1094,6 +1104,7 @@ static std::unique_ptr<W8OptionsPanel> CreateAudioOptionsPanel()
     panel->m_content_top += 22;
     panel->AddCheckbox(0x823, &g_settings.pc_confirmations);
     panel->AddCheckbox(0x824, &g_settings.pc_subtitles);
+    panel->AddCheckbox("Search Mode Barks", &g_settings.search_barks);
     return panel;
 }
 
@@ -1461,17 +1472,18 @@ W8ButtonWidget* W8OptionsPanel::AddButton(int x, int y, int artwork, int normal,
 }
 
 /* All labelled option rows use the same geometry and text formatting. */
-static void AddOptionsLabel(W8OptionsPanel& panel, int label)
+static void AddOptionsLabel(W8OptionsPanel& panel, std::string_view label)
 {
     W8ControlsRect bounds = {
         panel.ScreenBounds().x + 20, panel.ScreenBounds().y + panel.m_content_top,
         ToEdges(panel.ScreenBounds()).right, panel.ScreenBounds().y + panel.m_content_top + 22};
     panel.m_text_buffers.emplace_back(
-        std::make_unique<W8TextBuffer>(&bounds, Data().strings[label], g_options_detail_font,
+        std::make_unique<W8TextBuffer>(&bounds, label, g_options_detail_font,
                                        g_W8TextBufferAlignTop | g_W8TextBufferAlignLeft, 4));
 }
 
-void W8OptionsPanel::AddCheckbox(int label, bool selected, std::function<void(bool)> changed)
+void W8OptionsPanel::AddCheckbox(std::string_view label, bool selected,
+                                 std::function<void(bool)> changed)
 {
     const bool enabled = static_cast<bool>(changed);
     AddOptionsLabel(*this, label);
@@ -1501,7 +1513,7 @@ W8ButtonWidget* W8OptionsPanel::AddChoiceButton(int label, W8ButtonCallback call
 W8OptionsSlider* W8OptionsPanel::AddSlider(int label, float value, float minimum, float maximum,
                                            std::function<void(float)> changed, bool alternate)
 {
-    AddOptionsLabel(*this, label);
+    AddOptionsLabel(*this, Data().strings[label]);
     auto& slider = m_owned_sliders.emplace_back(std::make_unique<W8OptionsSlider>(
         m_input, SDL_Point{ScreenBounds().x + 0xc9, ScreenBounds().y + m_content_top - 2}, value,
         minimum, maximum, alternate));

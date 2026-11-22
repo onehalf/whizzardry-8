@@ -104,7 +104,9 @@ public:
     virtual void SetCurrent(int current);
     virtual void InvalidateAll() { m_dirty = true; }
     const SDL_Rect& ScreenBounds() const { return m_bounds; }
+    void AddCheckbox(std::string_view label, bool selected, std::function<void(bool)> changed = {});
     void AddCheckbox(int label, bool selected, std::function<void(bool)> changed = {});
+    void AddCheckbox(std::string_view label, bool* value);
     void AddCheckbox(int label, bool* value);
     W8ButtonWidget* AddChoiceButton(int label, W8ButtonCallback callback);
     W8OptionsSlider* AddSlider(int label, float value, float minimum, float maximum,
