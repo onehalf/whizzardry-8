@@ -1,0 +1,44 @@
+#version 450
+// One step of the bloom pyramid: a 13-tap downsample of the level above.
+// The first step also applies the soft brightness threshold.
+// parameters: x threshold, y knee, z 1 on the first step.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D destination;
+layout(push_constant) uniform Parameters { vec4 parameters; } pc;
+
+vec3 prefilter(vec3 c)
+{
+    float brightness = max(c.r, max(c.g, c.b));
+    float knee = pc.parameters.y;
+    float soft = clamp(brightness - pc.parameters.x + knee, 0.0, 2.0 * knee);
+    soft = soft * soft / (4.0 * knee + 1e-4);
+    float contribution = max(soft, brightness - pc.parameters.x) / max(brightness, 1e-4);
+    return c * contribution;
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(destination);
+    if (any(greaterThanEqual(pixel, size))) return;
+    vec2 texel = 1.0 / vec2(textureSize(source, 0));
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+    vec3 a = texture(source, uv + texel * vec2(-2, -2)).rgb;
+    vec3 b = texture(source, uv + texel * vec2(0, -2)).rgb;
+    vec3 c = texture(source, uv + texel * vec2(2, -2)).rgb;
+    vec3 d = texture(source, uv + texel * vec2(-2, 0)).rgb;
+    vec3 e = texture(source, uv).rgb;
+    vec3 f = texture(source, uv + texel * vec2(2, 0)).rgb;
+    vec3 g = texture(source, uv + texel * vec2(-2, 2)).rgb;
+    vec3 h = texture(source, uv + texel * vec2(0, 2)).rgb;
+    vec3 i = texture(source, uv + texel * vec2(2, 2)).rgb;
+    vec3 j = texture(source, uv + texel * vec2(-1, -1)).rgb;
+    vec3 k = texture(source, uv + texel * vec2(1, -1)).rgb;
+    vec3 l = texture(source, uv + texel * vec2(-1, 1)).rgb;
+    vec3 m = texture(source, uv + texel * vec2(1, 1)).rgb;
+    vec3 color = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625 +
+                 (j + k + l + m) * 0.125;
+    if (pc.parameters.z != 0.0) color = prefilter(color);
+    imageStore(destination, pixel, vec4(color, 1.0));
+}

@@ -193,6 +193,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # CTest already runs one graphics test per core; lavapipe's default of a
     # rasterizer thread per core in every test oversubscribes them.
     list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "LP_NUM_THREADS=1")
+    # Every enhancement stays on, but software rendering 8x multisampled HDR
+    # targets on one thread pushes long scenarios past their wall-clock limits.
+    list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "WIZ8_GFX=msaa=2")
 endif()
 add_test(NAME native_gpu_rendering COMMAND native_gpu_rendering_test)
 set_tests_properties(native_gpu_rendering PROPERTIES

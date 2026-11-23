@@ -369,7 +369,7 @@ static void RenderScene(WorldScene* scene, Camera3D* camera, const SceneFrame& f
                                          vsg::ViewportState::create(area.x, area.y, area.w, area.h),
                                          g_renderer->frameNumber());
     if (!picks.empty()) scene->pick(*render_view->camera, picks);
-    g_renderer->addView(render_view);
+    g_renderer->addSceneView(render_view);
 }
 
 /* The central renderer frame transaction. It owns presentation, every scene

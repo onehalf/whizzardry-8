@@ -45,10 +45,16 @@ public:
     vsg::ref_ptr<vsg::DescriptorSetLayout> pass_layout;
     vsg::ref_ptr<vsg::DescriptorSetLayout> batch_layout;
 
+    // Which render pass draws a pipeline. VSG shares a pipeline's compiled
+    // implementations between views with equal states and reuses the IDs of
+    // destroyed views, without comparing render passes, so one pipeline object
+    // must never be drawn in incompatible passes (the HDR scene and the window).
+    enum class Target : std::uint8_t { Scene, Window };
     vsg::ref_ptr<vsg::BindGraphicsPipeline> pipeline(std::uint32_t shader,
                                                      FaceCull cull = FaceCull::Back,
                                                      Winding winding = Winding::Standard,
-                                                     std::int32_t polygon_offset = 0);
+                                                     std::int32_t polygon_offset = 0,
+                                                     Target target = Target::Scene);
     vsg::ref_ptr<vsg::ImageInfo> texture(Texture* source, int reduction = 0);
     vsg::ref_ptr<vsg::BindDescriptorSet> descriptor(std::uint32_t set,
                                                     vsg::ref_ptr<vsg::Data> data);
@@ -59,7 +65,7 @@ public:
 private:
     vsg::ShaderStages stages;
     vsg::ref_ptr<vsg::ViewportState> viewport;
-    std::map<std::tuple<std::uint32_t, FaceCull, Winding, std::int32_t>,
+    std::map<std::tuple<std::uint32_t, FaceCull, Winding, std::int32_t, Target>,
              vsg::ref_ptr<vsg::BindGraphicsPipeline>>
         pipelines;
     vsg::ref_ptr<vsg::ImageInfo> white;

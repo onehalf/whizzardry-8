@@ -4,6 +4,7 @@ set(NATIVE_RENDER_SOURCES
     clip_plane.cpp
     effects/fog.cpp
     graphics_settings.cpp
+    post_process.cpp
     pipeline/draw_inputs.cpp
     renderer.cpp
     vsg_material.cpp
@@ -40,33 +41,36 @@ find_program(GLSLANG_VALIDATOR NAMES glslangValidator glslangValidator.exe REQUI
 set(VSG_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(VSG_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/vsg_shaders")
 set(VSG_SHADER_HEADERS)
-# Each variant is a shader source compiled with optional preprocessor defines.
-set(VSG_SHADER_VARIANTS "world|world|" "world_ppl|world|-DWZ_PER_PIXEL" "overlay|overlay|")
+# Each entry compiles one shader file, with optional preprocessor defines, to
+# a SPIR-V header named <name>.spv.h exposing the array <name>.
+set(VSG_SHADER_VARIANTS
+    "world_vert|world.vert|" "world_frag|world.frag|"
+    "world_ppl_vert|world.vert|-DWZ_PER_PIXEL" "world_ppl_frag|world.frag|-DWZ_PER_PIXEL"
+    "overlay_vert|overlay.vert|" "overlay_frag|overlay.frag|"
+    "post_ssao_comp|post_ssao.comp|" "post_ssao_ms_comp|post_ssao.comp|-DWZ_DEPTH_MS"
+    "post_blur_comp|post_blur.comp|" "post_blur_ms_comp|post_blur.comp|-DWZ_DEPTH_MS"
+    "post_bloom_down_comp|post_bloom_down.comp|" "post_bloom_up_comp|post_bloom_up.comp|"
+    "post_composite_vert|post_composite.vert|" "post_composite_frag|post_composite.frag|")
+file(GLOB VSG_SHADER_INCLUDES "${VSG_SHADER_SOURCE_DIR}/*.glsl")
 foreach(variant ${VSG_SHADER_VARIANTS})
     string(REPLACE "|" ";" parts "${variant}")
     list(GET parts 0 name)
-    list(GET parts 1 shader)
+    list(GET parts 1 source)
     list(LENGTH parts part_count)
     set(defines)
     if(part_count GREATER 2)
         list(GET parts 2 defines)
     endif()
-    foreach(stage vert frag)
-        set(header "${VSG_SHADER_DIR}/${name}_${stage}.spv.h")
-        add_custom_command(
-            OUTPUT "${header}"
-            COMMAND "${CMAKE_COMMAND}" -E make_directory "${VSG_SHADER_DIR}"
-            COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.0 ${defines}
-                "-I${VSG_SHADER_SOURCE_DIR}" --vn ${name}_${stage}
-                -o "${header}" "${VSG_SHADER_SOURCE_DIR}/${shader}.${stage}"
-            DEPENDS "${VSG_SHADER_SOURCE_DIR}/${shader}.${stage}"
-                "${VSG_SHADER_SOURCE_DIR}/world_blocks.glsl"
-                "${VSG_SHADER_SOURCE_DIR}/world_host.glsl"
-                "${VSG_SHADER_SOURCE_DIR}/wizardry_vertex.glsl"
-                "${VSG_SHADER_SOURCE_DIR}/wizardry_fragment.glsl"
-            VERBATIM)
-        list(APPEND VSG_SHADER_HEADERS "${header}")
-    endforeach()
+    set(header "${VSG_SHADER_DIR}/${name}.spv.h")
+    add_custom_command(
+        OUTPUT "${header}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${VSG_SHADER_DIR}"
+        COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.0 ${defines}
+            "-I${VSG_SHADER_SOURCE_DIR}" --vn ${name}
+            -o "${header}" "${VSG_SHADER_SOURCE_DIR}/${source}"
+        DEPENDS "${VSG_SHADER_SOURCE_DIR}/${source}" ${VSG_SHADER_INCLUDES}
+        VERBATIM)
+    list(APPEND VSG_SHADER_HEADERS "${header}")
 endforeach()
 add_custom_target(wiz8_shader_headers DEPENDS ${VSG_SHADER_HEADERS})
 add_dependencies(wiz8_engine wiz8_shader_headers)

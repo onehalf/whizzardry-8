@@ -1,0 +1,75 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Screen-space ambient occlusion from the scene depth: a normal-oriented
+// hemisphere of samples per pixel, rotated by interleaved gradient noise.
+// parameters: x radius (eye units), y bias, z intensity exponent.
+layout(local_size_x = 8, local_size_y = 8) in;
+#include "post_common.glsl"
+layout(set = 0, binding = 1, r16f) uniform writeonly image2D ao_image;
+
+const int SAMPLES = 16;
+
+float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy) + post.rect.xy;
+    if (!wzInside(pixel)) return;
+    float depth = wzDepth(pixel);
+    if (depth <= 0.0) { imageStore(ao_image, pixel, vec4(1.0)); return; }
+    mat4 inverse_projection = inverse(post.projection);
+    vec3 p = wzEyePosition(pixel, depth, inverse_projection);
+
+    // The normal from the neighbour on each axis whose depth is closest.
+    ivec2 lo = post.rect.xy, hi = post.rect.xy + post.rect.zw - 1;
+    ivec2 r = clamp(pixel + ivec2(1, 0), lo, hi), l = clamp(pixel - ivec2(1, 0), lo, hi);
+    ivec2 u = clamp(pixel + ivec2(0, 1), lo, hi), d = clamp(pixel - ivec2(0, 1), lo, hi);
+    vec3 pr = wzEyePosition(r, wzDepth(r), inverse_projection) - p;
+    vec3 pl = p - wzEyePosition(l, wzDepth(l), inverse_projection);
+    vec3 pu = wzEyePosition(u, wzDepth(u), inverse_projection) - p;
+    vec3 pd = p - wzEyePosition(d, wzDepth(d), inverse_projection);
+    vec3 dx = abs(pr.z) < abs(pl.z) ? pr : pl;
+    vec3 dy = abs(pu.z) < abs(pd.z) ? pu : pd;
+    vec3 n = normalize(cross(dx, dy));
+    if (dot(n, p) > 0.0) n = -n; // face the eye
+
+    float radius = post.parameters.x;
+    float bias = post.parameters.y;
+    float angle = ign(vec2(pixel)) * 6.2831853;
+    vec3 helper = abs(n.z) < 0.9 ? vec3(0, 0, 1) : vec3(1, 0, 0);
+    vec3 t = normalize(cross(helper, n));
+    vec3 b = cross(n, t);
+    float ca = cos(angle), sa = sin(angle);
+    vec3 tr = t * ca + b * sa, br = -t * sa + b * ca;
+
+    float occlusion = 0.0;
+    for (int i = 0; i < SAMPLES; ++i) {
+        // A fixed spiral of hemisphere directions; the distance of each
+        // sample follows a separate sequence so far samples are not all
+        // grazing the surface, and none lies flat in its plane.
+        float fi = (float(i) + 0.5) / float(SAMPLES);
+        float gi = fract(float(i) * 0.7548776662 + 0.5);
+        float phi = float(i) * 2.39996323;
+        float cz = max(sqrt(1.0 - gi), 0.25);
+        float sz = sqrt(1.0 - cz * cz);
+        vec3 dir = tr * (cos(phi) * sz) + br * (sin(phi) * sz) + n * cz;
+        float scale = mix(0.15, 1.0, fi * fi);
+        vec3 s = p + dir * radius * scale;
+        vec4 clip = post.projection * vec4(s, 1.0);
+        if (clip.w <= 0.0) continue;
+        vec2 ndc = clip.xy / clip.w;
+        ivec2 sp = ivec2((ndc * 0.5 + 0.5) * vec2(post.rect.zw)) + post.rect.xy;
+        if (!wzInside(sp)) continue;
+        float sd = wzDepth(sp);
+        if (sd <= 0.0) continue;
+        vec3 q = wzEyePosition(sp, sd, inverse_projection);
+        // The surface seen through the sample's pixel hides the sample when
+        // it lies nearer the eye along that ray (independent of handedness).
+        float range = smoothstep(0.0, 1.0, radius / max(abs(length(p) - length(q)), 1e-4));
+        // Depth quantization grows with distance and grazing angle.
+        float tolerance = bias + 0.002 * length(p);
+        occlusion += (length(q) <= length(s) - tolerance ? 1.0 : 0.0) * range;
+    }
+    float ao = 1.0 - occlusion / float(SAMPLES);
+    imageStore(ao_image, pixel, vec4(pow(clamp(ao, 0.0, 1.0), post.parameters.z)));
+}

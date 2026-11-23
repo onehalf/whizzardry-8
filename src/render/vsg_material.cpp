@@ -144,6 +144,9 @@ RenderContext::RenderContext(VkExtent2D extent, int samples)
     stages[1]->specializationConstants[0] =
         vsg::uintValue::create(graphics.alpha_to_coverage && samples > 1 ? 1u : 0u);
     stages[1]->specializationConstants[1] = vsg::intValue::create(samples);
+    const auto light_max = vsg::floatValue::create(graphics.hdr ? graphics.light_max : 1.0f);
+    stages[0]->specializationConstants[2] = light_max;
+    stages[1]->specializationConstants[2] = light_max;
     auto pixel = vsg::ubvec4Array2D::create(1, 1, vsg::Data::Properties{VK_FORMAT_R8G8B8A8_UNORM});
     pixel->at(0, 0) = vsg::ubvec4(255, 255, 255, 255);
     white = vsg::ImageInfo::create(vsg::Sampler::create(), pixel);
@@ -151,9 +154,10 @@ RenderContext::RenderContext(VkExtent2D extent, int samples)
 
 vsg::ref_ptr<vsg::BindGraphicsPipeline> RenderContext::pipeline(std::uint32_t shader, FaceCull cull,
                                                                 Winding winding,
-                                                                std::int32_t polygon_offset)
+                                                                std::int32_t polygon_offset,
+                                                                Target target)
 {
-    auto& found = pipelines[{shader, cull, winding, polygon_offset}];
+    auto& found = pipelines[{shader, cull, winding, polygon_offset, target}];
     if (found) return found;
     static constexpr std::array source{VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE,
                                        VK_BLEND_FACTOR_SRC_ALPHA,

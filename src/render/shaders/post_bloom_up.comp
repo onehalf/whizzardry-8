@@ -1,0 +1,23 @@
+#version 450
+// One step back up the bloom pyramid: a 3x3 tent upsample of the smaller
+// level added into this one.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0) uniform sampler2D source;
+layout(set = 0, binding = 1, rgba16f) uniform image2D destination;
+layout(push_constant) uniform Parameters { vec4 parameters; } pc;
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(destination);
+    if (any(greaterThanEqual(pixel, size))) return;
+    vec2 texel = 1.0 / vec2(textureSize(source, 0));
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+    vec3 sum = texture(source, uv).rgb * 4.0;
+    sum += (texture(source, uv + texel * vec2(-1, 0)).rgb + texture(source, uv + texel * vec2(1, 0)).rgb +
+            texture(source, uv + texel * vec2(0, -1)).rgb + texture(source, uv + texel * vec2(0, 1)).rgb) * 2.0;
+    sum += texture(source, uv + texel * vec2(-1, -1)).rgb + texture(source, uv + texel * vec2(1, -1)).rgb +
+           texture(source, uv + texel * vec2(-1, 1)).rgb + texture(source, uv + texel * vec2(1, 1)).rgb;
+    vec3 current = imageLoad(destination, pixel).rgb;
+    imageStore(destination, pixel, vec4(current + sum / 16.0 * pc.parameters.x, 1.0));
+}

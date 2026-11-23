@@ -14,3 +14,11 @@ layout(std140, set = 3, binding = 0) uniform Batch {
 #define WZ_FOG_BASE int(view.values[2].w)
 #define WZ_MATERIAL_BASE (WZ_FOG_BASE + int(view.values[2].y))
 #define WZ_MATERIAL_VEC4S 6
+
+// Retail clamps lit colours to 1. The HDR scene target keeps light up to this
+// ceiling so highlights, overlapping lights and additive effects can bloom.
+layout(constant_id = 2) const float wz_light_max = 1.0;
+vec4 wzClampLight(vec4 color)
+{
+    return vec4(clamp(color.rgb, 0.0, wz_light_max), clamp(color.a, 0.0, 1.0));
+}

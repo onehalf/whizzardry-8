@@ -457,7 +457,7 @@ void CheckTwoWorldViews(GameHarness& game)
     const auto stamp = g_renderer->frameNumber();
     const SceneFrame frame{.time = RenderClockSeconds()};
     for (int x : {0, SCREEN_WIDTH / 2})
-        g_renderer->addView(scene.createView(
+        g_renderer->addSceneView(scene.createView(
             g_renderer->context(), GetWorld()->camera, frame,
             vsg::ViewportState::create(x, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT), stamp));
     g_renderer->endFrame(false, true);

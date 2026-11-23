@@ -261,7 +261,7 @@ WzLit wzLight(vec3 eye, vec3 normal, float material_index, float vertex_alpha,
             (draw_flags & (WZ_HAS_COLORS | WZ_HAS_ALPHA)) == 0) {
             diffuse = ambient_light * info_ambient + info_emissive;
             diffuse.w = info_diffuse.w;
-            diffuse = clamp(diffuse, 0.0, 1.0);
+            diffuse = wzClampLight(diffuse);
         } else {
             if ((final_channels & WZ_DIFFUSE) != 0 && !diffuse_ready) {
                 diffuse = base;
@@ -277,7 +277,7 @@ WzLit wzLight(vec3 eye, vec3 normal, float material_index, float vertex_alpha,
                                 ? info_diffuse.w * alpha
                                 : info_diffuse.w * clamp(alpha, 0.0, 1.0);
             }
-            if ((final_channels & WZ_DIFFUSE) != 0) diffuse = clamp(diffuse, 0.0, 1.0);
+            if ((final_channels & WZ_DIFFUSE) != 0) diffuse = wzClampLight(diffuse);
         }
         if ((draw_flags & WZ_HAS_DIFFUSE_MULTIPLIERS) != 0) diffuse *= diffuse_multiplier;
         result.diffuse = diffuse;
@@ -292,7 +292,7 @@ WzLit wzLight(vec3 eye, vec3 normal, float material_index, float vertex_alpha,
         } else {
             if (!specular_ready) specular = vec4(0.0);
             if ((final_channels & WZ_FOG) != 0) specular.w = fog_scale * fog;
-            specular = clamp(specular, 0.0, 1.0);
+            specular = wzClampLight(specular);
         }
         if ((draw_flags & WZ_HAS_SPECULAR_MULTIPLIERS) != 0) specular *= specular_multiplier;
         result.specular = specular;

@@ -194,8 +194,11 @@ void MapView::Surface::update(render::RenderContext& context, const MeshInstance
                 continue;
             if (batch.shader != shader) {
                 const auto cull = batch.leaf->cull;
-                batch.leaf->setPipeline(context.pipeline(shader, cull, Winding::Standard),
-                                        context.pipeline(shader, cull, Winding::Reversed));
+                // The automap draws straight into the window pass.
+                using enum render::RenderContext::Target;
+                batch.leaf->setPipeline(
+                    context.pipeline(shader, cull, Winding::Standard, 0, Window),
+                    context.pipeline(shader, cull, Winding::Reversed, 0, Window));
                 batch.shader = shader;
             }
             if (batch.images) batch.leaf->remove(batch.images);

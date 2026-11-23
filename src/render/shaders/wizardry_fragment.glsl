@@ -34,5 +34,5 @@ vec4 wzCombine(vec4 texel, vec4 diffuse, vec4 specular)
         color.rgb = mix(color.rgb, vec3(1.0), fog);
     else if (mode.w == WZ_FOG_SCALE_FRAGMENT)
         color.rgb *= 1.0 - fog;
-    return clamp(color, 0.0, 1.0);
+    return wzClampLight(color);
 }

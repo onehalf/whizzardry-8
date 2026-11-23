@@ -94,6 +94,7 @@
 #include "wiz8/platform/timer.h"
 #include "wiz8/render/compositor.h"
 #include "wiz8/render/graphics_settings.h"
+#include "wiz8/render/post_process.h"
 #include "wiz8/render/texture.h"
 #include "wiz8/render/vsg_material.h"
 #include "wiz8/surface_storage.h"
@@ -229,6 +230,7 @@ struct Renderer::Impl {
     vsg::ref_ptr<vsg::RenderGraph> offscreen_graph;
     vsg::ref_ptr<vsg::Image> offscreen_color;
     vsg::ref_ptr<FrameCompiler> compiler;
+    std::unique_ptr<render::PostProcess> post;
     std::unique_ptr<render::RenderContext> context;
     vsg::ref_ptr<vsg::DescriptorSetLayout> overlay_set_layout;
     vsg::ref_ptr<vsg::PipelineLayout> overlay_layout;
@@ -306,9 +308,15 @@ Renderer::Impl::Impl(SDL_Window* platform_window) : platform_window(platform_win
     render_graph->addChild(frame_root);
     auto commands = vsg::CommandGraph::create(window);
     graphics_family = commands->queueFamily;
+    auto device = window->getOrCreateDevice();
+    if (CurrentGraphicsSettings().hdr) {
+        post = std::make_unique<render::PostProcess>(
+            device, window->framebufferSamples(), window->depthFormat(), CurrentGraphicsSettings());
+        post->resize(window->extent2D());
+        commands->addChild(post->commands());
+    }
     commands->addChild(render_graph);
     viewer->assignRecordAndSubmitTaskAndPresentation({commands});
-    auto device = window->getOrCreateDevice();
     compiler = FrameCompiler::create(device);
     offscreen_viewer->assignRecordAndSubmitTaskAndPresentation(
         {vsg::CommandGraph::create(device, graphics_family)});
@@ -372,6 +380,7 @@ void Renderer::Impl::createOffscreen()
     // with the window holds the semaphores this task signals.
     auto& commands = offscreen_viewer->recordAndSubmitTasks.front()->commandGraphs.front();
     commands->children = {offscreen_graph};
+    if (post) commands->children.insert(commands->children.begin(), post->commands());
 }
 
 void Renderer::Impl::syncTargets()
@@ -393,6 +402,7 @@ void Renderer::Impl::syncTargets()
         return false;
     });
     render_graph->renderArea = {{0, 0}, extent};
+    if (post) post->resize(extent);
     createOffscreen();
     for (auto& view : overlay_views)
         view->camera->viewportState = vsg::ViewportState::create(extent);
@@ -543,6 +553,7 @@ void Renderer::beginFrame(const glm::vec4& clear)
         view->children.front().cast<vsg::Group>()->children.clear();
     impl->render_graph->setClearValues({{clear.r, clear.g, clear.b, clear.a}}, {0, 0});
     impl->offscreen_graph->setClearValues({{clear.r, clear.g, clear.b, clear.a}}, {0, 0});
+    if (impl->post) impl->post->beginFrame(clear);
 }
 void Renderer::addView(vsg::ref_ptr<vsg::View> view)
 {
@@ -551,6 +562,16 @@ void Renderer::addView(vsg::ref_ptr<vsg::View> view)
         impl->submitted_views.emplace_back(view);
     impl->current_overlay = {};
     impl->frame_root->addChild(view);
+}
+void Renderer::addSceneView(vsg::ref_ptr<vsg::View> view)
+{
+    if (!impl->post) return addView(std::move(view));
+    std::erase_if(impl->submitted_views, [](const auto& weak) { return !weak.valid(); });
+    if (std::ranges::none_of(impl->submitted_views, [&](const auto& weak) { return weak == view; }))
+        impl->submitted_views.emplace_back(view);
+    impl->current_overlay = {};
+    if (auto composite = impl->post->addView(std::move(view)))
+        impl->frame_root->addChild(composite);
 }
 void Renderer::prepareOverlay(OverlayQuad& quad)
 {

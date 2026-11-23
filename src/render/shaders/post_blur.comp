@@ -1,0 +1,29 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Depth-aware 5x5 blur of the raw occlusion, keeping edges between surfaces.
+layout(local_size_x = 8, local_size_y = 8) in;
+#include "post_common.glsl"
+layout(set = 0, binding = 1, r16f) uniform readonly image2D raw_ao;
+layout(set = 0, binding = 2, r16f) uniform writeonly image2D ao_image;
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy) + post.rect.xy;
+    if (!wzInside(pixel)) return;
+    float depth = wzDepth(pixel);
+    if (depth <= 0.0) { imageStore(ao_image, pixel, vec4(1.0)); return; }
+    mat4 inverse_projection = inverse(post.projection);
+    float z = wzEyePosition(pixel, depth, inverse_projection).z;
+    float total = 0.0, weights = 0.0;
+    for (int y = -2; y <= 2; ++y)
+        for (int x = -2; x <= 2; ++x) {
+            ivec2 q = clamp(pixel + ivec2(x, y), post.rect.xy, post.rect.xy + post.rect.zw - 1);
+            float qd = wzDepth(q);
+            if (qd <= 0.0) continue;
+            float qz = wzEyePosition(q, qd, inverse_projection).z;
+            float w = exp(-abs(qz - z) / max(abs(z) * 0.02, 1e-3));
+            total += imageLoad(raw_ao, q).r * w;
+            weights += w;
+        }
+    imageStore(ao_image, pixel, vec4(weights > 0.0 ? total / weights : 1.0));
+}
