@@ -944,6 +944,9 @@ static std::unique_ptr<W8OptionsPanel> CreateGraphicsOptionsPanel()
     AddRenderCheckbox(*panel, 0x81b, W8_RENDER_OPTION_HIGH_TEXTURE_DETAIL);
     panel->AddCheckbox(0x818, &g_settings.monster_shadows);
     AddRenderCheckbox(*panel, 0x817, W8_RENDER_OPTION_ADDITIONAL_ANIMATIONS);
+    panel->m_content_top += 22;
+    panel->AddSlider("Brightness", g_render_gamma, kRenderGammaMinimum, kRenderGammaMaximum,
+                     [](float gamma) { g_render_gamma = gamma; });
     return panel;
 }
 
@@ -1513,7 +1516,15 @@ W8ButtonWidget* W8OptionsPanel::AddChoiceButton(int label, W8ButtonCallback call
 W8OptionsSlider* W8OptionsPanel::AddSlider(int label, float value, float minimum, float maximum,
                                            std::function<void(float)> changed, bool alternate)
 {
-    AddOptionsLabel(*this, Data().strings[label]);
+    return AddSlider(std::string_view(Data().strings[label]), value, minimum, maximum,
+                     std::move(changed), alternate);
+}
+
+W8OptionsSlider* W8OptionsPanel::AddSlider(std::string_view label, float value, float minimum,
+                                           float maximum, std::function<void(float)> changed,
+                                           bool alternate)
+{
+    AddOptionsLabel(*this, label);
     auto& slider = m_owned_sliders.emplace_back(std::make_unique<W8OptionsSlider>(
         m_input, SDL_Point{ScreenBounds().x + 0xc9, ScreenBounds().y + m_content_top - 2}, value,
         minimum, maximum, alternate));

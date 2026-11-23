@@ -2,8 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <exception>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -216,6 +216,7 @@ void LoadGameConfiguration(void)
     bool loaded = false;
     bool reset = true;
     std::optional<bool> search_barks;
+    std::optional<float> gamma;
 
     path = fmt::format("{}.{}", g_config_file_name, g_config_file_extension);
     ResetMGSKeyboardBindings();
@@ -235,7 +236,9 @@ void LoadGameConfiguration(void)
             } else if (id == W8_CHUNK_RENDER_OPTIONS) {
                 LoadRenderOptions(file);
             } else if (id == W8_CHUNK_NATIVE_SETTINGS && file.RemainingBytes() >= 1) {
+                // Native settings append fields; older files simply end sooner.
                 search_barks = file.ReadValue<std::uint8_t>() != 0;
+                if (file.RemainingBytes() >= 4) gamma = file.ReadValue<float>();
             }
         });
         file.Close();
@@ -248,6 +251,8 @@ void LoadGameConfiguration(void)
     }
     // Decoding CNFG replaces the whole record, so apply native settings after it.
     if (search_barks) g_settings.search_barks = *search_barks;
+    if (gamma && *gamma >= kRenderGammaMinimum && *gamma <= kRenderGammaMaximum)
+        g_render_gamma = *gamma;
     if (reset) {
         ResetGameplaySettings();
         SaveGameConfiguration();
@@ -277,6 +282,7 @@ try {
     file.WriteChunk(W8_CHUNK_NATIVE_SETTINGS, [&] {
         const auto search_barks = static_cast<std::byte>(g_settings.search_barks);
         file.WriteBytes(&search_barks, 1);
+        file.WriteBytes(&g_render_gamma, sizeof(g_render_gamma));
     });
     file.Close();
     return true;

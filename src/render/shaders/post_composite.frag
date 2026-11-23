@@ -9,6 +9,7 @@ layout(set = 0, binding = 2) uniform sampler2D bloom_texture;
 layout(push_constant) uniform Parameters {
     layout(offset = 128) vec4 grade;  // x exposure, y ao strength, z bloom intensity, w shoulder start
     vec4 look;   // x saturation, y contrast, z debug view, w 1 when AO is valid
+    vec4 tone;   // x brightness gamma
 } pc;
 layout(location = 0) out vec4 out_color;
 
@@ -31,6 +32,7 @@ void main()
     color = max(mix(vec3(luma), color, pc.look.x), 0.0);
     color = max((color - 0.5) * pc.look.y + 0.5, 0.0);
     color = shoulder(color, pc.grade.w);
+    color = pow(color, vec3(1.0 / pc.tone.x));
     if (pc.look.z == 1.0) color = vec3(texelFetch(ao_texture, pixel, 0).r);
     if (pc.look.z == 2.0) color = textureLod(bloom_texture, uv, 0.0).rgb;
     out_color = vec4(color, 1.0);

@@ -44,3 +44,8 @@ extern float g_render_brightness;
 extern float g_render_fog_distance;
 extern bool g_render_missile_lights;
 extern bool g_render_mesh_sky;
+/* Native brightness: a gamma curve over the 3D view in the HDR composite
+   (1 leaves retail colours alone; higher values lift dark areas). */
+extern float g_render_gamma;
+constexpr float kRenderGammaMinimum = 0.5f;
+constexpr float kRenderGammaMaximum = 2.0f;

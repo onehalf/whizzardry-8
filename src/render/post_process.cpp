@@ -19,6 +19,7 @@
 #include "post_ssao_comp.spv.h"
 #include "post_ssao_ms_comp.spv.h"
 #include "wiz8/render/graphics_settings.h"
+#include "wiz8/render/quality.h"
 
 namespace render {
 namespace {
@@ -37,6 +38,7 @@ static_assert(sizeof(PostParameters) == 96);
 struct CompositeParameters {
     glm::vec4 grade;
     glm::vec4 look;
+    glm::vec4 tone;
 };
 
 vsg::ref_ptr<vsg::ShaderModule> module(std::span<const std::uint32_t> code)
@@ -499,15 +501,15 @@ vsg::ref_ptr<vsg::View> PostProcess::addView(vsg::ref_ptr<vsg::View> view)
     writePushData(*targets.blur->push, PostParameters{matrix, rect, {}});
     targets.ssao->size(bounds.extent.width, bounds.extent.height);
     targets.blur->size(bounds.extent.width, bounds.extent.height);
-    writePushData(
-        *targets.composite_push,
-        // The upsample chain sums every pyramid level into the first.
-        CompositeParameters{{settings_.exposure, settings_.ssao,
-                             settings_.bloom / static_cast<float>(targets.bloom_down.size()),
-                             std::clamp(settings_.shoulder, 0.0f, 0.99f)},
-                            {settings_.saturation, settings_.contrast,
-                             static_cast<float>(settings_.post_debug),
-                             ambient_occlusion_ ? 1.0f : 0.0f}});
+    writePushData(*targets.composite_push,
+                  // The upsample chain sums every pyramid level into the first.
+                  CompositeParameters{
+                      {settings_.exposure, settings_.ssao,
+                       settings_.bloom / static_cast<float>(targets.bloom_down.size()),
+                       std::clamp(settings_.shoulder, 0.0f, 0.99f)},
+                      {settings_.saturation, settings_.contrast,
+                       static_cast<float>(settings_.post_debug), ambient_occlusion_ ? 1.0f : 0.0f},
+                      {g_render_gamma, 0, 0, 0}});
     targets.composite->camera->viewportState = vsg::ViewportState::create(
         bounds.offset.x, bounds.offset.y, bounds.extent.width, bounds.extent.height);
     buildFrameCommands();

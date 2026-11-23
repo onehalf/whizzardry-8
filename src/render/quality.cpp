@@ -21,6 +21,7 @@ float g_render_brightness = 1.0f;
 float g_render_fog_distance = 0.5f;
 bool g_render_missile_lights = true;
 bool g_render_mesh_sky = true;
+float g_render_gamma = 1.0f;
 
 void EnableRenderOption(W8RenderOption option)
 {

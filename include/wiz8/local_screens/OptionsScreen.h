@@ -111,6 +111,8 @@ public:
     W8ButtonWidget* AddChoiceButton(int label, W8ButtonCallback callback);
     W8OptionsSlider* AddSlider(int label, float value, float minimum, float maximum,
                                std::function<void(float)> changed = {}, bool alternate = false);
+    W8OptionsSlider* AddSlider(std::string_view label, float value, float minimum, float maximum,
+                               std::function<void(float)> changed = {}, bool alternate = false);
     template<typename T> void AddChoices(int label, int count, const int* choices, T* value);
     void AddChoices(int label, int count, const int* choices, int selected,
                     std::function<void(int)> changed);
