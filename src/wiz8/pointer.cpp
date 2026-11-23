@@ -62,7 +62,9 @@ void Pointer::showLook(const Look& look)
     frame_ = 0;
     switch (look.kind) {
     case PointerRequest::Kind::None: {
+        // Without the artwork (tests without retail assets) the cursor stays blank.
         const auto cursor = CatalogArtwork::Load(0);
+        if (!cursor.spriteSheet()) break;
         SetMouseCursorFromVideoObject(*cursor.spriteSheet(), cursor.imageOffset(), 0, 0);
         RefreshMouseCursorTexture();
         break;
