@@ -21,6 +21,7 @@
 
 #include "wiz8/filesystem.h"
 #include "wiz8/platform/random.h"
+#include "wiz8/render/graphics_settings.h"
 #include "wiz8/render/image_io.h"
 #include "wiz8/surface_storage.h"
 #include "wiz8/texture_animation.h"
@@ -200,6 +201,12 @@ vsg::ref_ptr<vsg::ImageInfo> Texture::imageInfo(int reduction)
                                                           : VK_SAMPLER_MIPMAP_MODE_NEAREST;
     sampler->maxLod = effective.mipmap == MIPMAP_NONE || dimensions.native_size ? 0.0f : 16.0f;
     sampler->mipLodBias = effective.mipmap_bias;
+    if (const auto anisotropy = CurrentGraphicsSettings().anisotropy;
+        anisotropy > 1.0f && effective.min != FILTER_NONE && effective.min != FILTER_FASTEST &&
+        !dimensions.native_size) {
+        sampler->anisotropyEnable = VK_TRUE;
+        sampler->maxAnisotropy = anisotropy;
+    }
     sampler->addressModeU = effective.wrap_s == WRAP_CLAMP ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
                                                            : VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler->addressModeV = effective.wrap_t == WRAP_CLAMP ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE

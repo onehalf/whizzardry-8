@@ -138,7 +138,8 @@ void Pointer::showHeldItem(int overlay)
 void Pointer::animate()
 {
     if (!shown_ || shown_->kind != PointerRequest::Kind::Slot) return;
-    const auto frame_count = static_cast<int>(g_main_game_resource_slots[shown_->value].frame_count);
+    const auto frame_count =
+        static_cast<int>(g_main_game_resource_slots[shown_->value].frame_count);
     if (frame_count <= 1 || TimeUntilDeadline(next_frame_)) return;
     if (++frame_ == frame_count) frame_ = 0;
     applyShownSlot();

@@ -31,10 +31,16 @@ const int WZ_DERIVED_DIRECTIONAL = 0x04;
 const int WZ_DERIVED_OPENGL = 0x08;
 const int WZ_DERIVED_CONSTANT = 0x10;
 
+struct WzLit {
+    vec4 diffuse;  // vec4(1) when the batch writes no diffuse or alpha
+    vec4 specular; // rgb secondary colour, a fog factor
+};
+
 struct WzVertex {
     vec4 eye;
     vec4 diffuse;  // vec4(1) when the batch writes no diffuse or alpha
     vec4 specular; // rgb secondary colour, a fog factor
+    vec3 normal;   // eye space, unnormalized
     vec2 st0;
     vec2 st1;
 };
@@ -84,41 +90,17 @@ float wzAttenuation(int base, int flags, vec3 direction, float distance)
     return attenuation;
 }
 
-// Metadata selects material, mapped UV behavior and per-vertex alpha.
-WzVertex wzShadeVertex(mat4 model_view, mat3 normal_matrix, vec3 vertex_position,
-                       vec3 vertex_normal, vec4 metadata, vec4 texcoords, vec4 vertex_color,
-                       vec4 diffuse_multiplier, vec4 specular_multiplier)
+int wzMaterialBase(float material_index)
 {
-    vec4 index_material_alpha = vec4(0.0, metadata.x, metadata.y, metadata.z);
-    vec4 draw = wzDraw(0);
-    int final_channels = int(draw.x);
-    int draw_flags = int(draw.y);
-    bool has_normals = draw.z != 0.0;
+    return WZ_MATERIAL_BASE + int(material_index) * WZ_MATERIAL_VEC4S;
+}
 
-    WzVertex result;
-    vec4 eye = model_view * vec4(vertex_position, 1.0);
-    if ((draw_flags & 0x80) != 0) {
-        // Camera-facing particles keep one world-space simulation result.
-        // Each view constructs its own corners from that centre in the shader.
-        float scale = 1.0 / length(transpose(mat3(inverse(model_view)))[0]);
-        eye.xy += (texcoords.xy - vec2(0.5)) * vec2(1.0, -1.0) * metadata.w * scale;
-    }
-    vec3 normal = has_normals ? normal_matrix * vertex_normal : vec3(0.0, 0.0, -1.0);
-    float eye_distance = length(eye.xyz);
-
-    int material = WZ_MATERIAL_BASE + int(index_material_alpha.y) * WZ_MATERIAL_VEC4S;
-    vec4 info_diffuse = wzShading(material + 0);
-    vec4 info_ambient = wzShading(material + 1);
-    vec4 info_specular = wzShading(material + 2);
-    vec4 info_emissive = wzShading(material + 3);
+// The material's effective channels for this draw.
+int wzChannels(int material)
+{
     vec4 info_scalars = wzShading(material + 4);
-    vec4 info_mapping = wzShading(material + 5);
-    float shininess = info_scalars.x;
-    float fog_scale = info_scalars.y;
     int operations = int(info_scalars.z);
-    int disabled = int(info_scalars.w);
-
-    int channels = final_channels & ~disabled;
+    int channels = int(wzDraw(0).x) & ~int(info_scalars.w);
     if ((channels & WZ_DIFFUSE) == 0) channels &= ~(WZ_LIGHT_DIFFUSE | WZ_LIGHT_AMBIENT);
     if ((channels & (WZ_LIGHT_DIFFUSE | WZ_LIGHT_AMBIENT)) == 0) channels &= ~WZ_DIFFUSE;
     if ((operations & (WZ_OPER_DIFFUSE_SPECULAR | WZ_OPER_DIFFUSE)) != 0) {
@@ -131,6 +113,30 @@ WzVertex wzShadeVertex(mat4 model_view, mat3 normal_matrix, vec3 vertex_position
         channels &= ~(WZ_DIFFUSE | WZ_LIGHT_DIFFUSE | WZ_LIGHT_AMBIENT);
         channels |= WZ_SPECULAR;
     }
+    return channels;
+}
+
+// Wizardry's lighting, fog and depth cue at one eye-space point. The vertex
+// stage evaluates it per vertex as retail did; the per-pixel variant runs the
+// same rules in the fragment stage on interpolated positions and normals.
+WzLit wzLight(vec3 eye, vec3 normal, float material_index, float vertex_alpha,
+              vec4 vertex_color, vec4 diffuse_multiplier, vec4 specular_multiplier)
+{
+    vec4 draw = wzDraw(0);
+    int final_channels = int(draw.x);
+    int draw_flags = int(draw.y);
+    float eye_distance = length(eye);
+    int material = wzMaterialBase(material_index);
+    vec4 info_diffuse = wzShading(material + 0);
+    vec4 info_ambient = wzShading(material + 1);
+    vec4 info_specular = wzShading(material + 2);
+    vec4 info_emissive = wzShading(material + 3);
+    vec4 info_scalars = wzShading(material + 4);
+    float shininess = info_scalars.x;
+    float fog_scale = info_scalars.y;
+    int operations = int(info_scalars.z);
+    int channels = wzChannels(material);
+    WzLit result;
 
     vec4 ambient_light = wzShading(0);
     vec4 base = ambient_light * info_ambient + info_emissive;
@@ -159,7 +165,7 @@ WzVertex wzShadeVertex(mat4 model_view, mat3 normal_matrix, vec3 vertex_position
         vec3 direction = location.xyz;
         float distance = 0.0;
         if (!directional) {
-            vec3 offset = location.xyz - eye.xyz;
+            vec3 offset = location.xyz - eye;
             distance = length(offset);
             direction = distance == 0.0 ? offset : offset / distance;
         }
@@ -178,7 +184,7 @@ WzVertex wzShadeVertex(mat4 model_view, mat3 normal_matrix, vec3 vertex_position
             diffuse += ((wzShading(light_base + 2) * info_diffuse) * attenuation) * facing;
         }
         if ((enabled & WZ_SPECULAR) != 0) {
-            vec3 eye_direction = eye.xyz / length(eye.xyz);
+            vec3 eye_direction = eye / eye_distance;
             vec3 halfway = direction - eye_direction;
             float halfway_length = length(halfway);
             if (halfway_length != 0.0) halfway /= halfway_length;
@@ -263,7 +269,7 @@ WzVertex wzShadeVertex(mat4 model_view, mat3 normal_matrix, vec3 vertex_position
             }
             if ((final_channels & WZ_ALPHA) != 0) {
                 if ((draw_flags & WZ_HAS_ALPHA) != 0) {
-                    alpha = alpha_ready ? alpha * index_material_alpha.w : index_material_alpha.w;
+                    alpha = alpha_ready ? alpha * vertex_alpha : vertex_alpha;
                     alpha_ready = true;
                 }
                 diffuse.w = !alpha_ready ? clamp(info_diffuse.w, 0.0, 1.0)
@@ -292,10 +298,45 @@ WzVertex wzShadeVertex(mat4 model_view, mat3 normal_matrix, vec3 vertex_position
         result.specular = specular;
     }
 
+    return result;
+}
+
+// Metadata selects material, mapped UV behavior and per-vertex alpha.
+WzVertex wzShadeVertex(mat4 model_view, mat3 normal_matrix, vec3 vertex_position,
+                       vec3 vertex_normal, vec4 metadata, vec4 texcoords, vec4 vertex_color,
+                       vec4 diffuse_multiplier, vec4 specular_multiplier)
+{
+    vec4 draw = wzDraw(0);
+    int draw_flags = int(draw.y);
+    bool has_normals = draw.z != 0.0;
+
+    WzVertex result;
+    vec4 eye = model_view * vec4(vertex_position, 1.0);
+    if ((draw_flags & 0x80) != 0) {
+        // Camera-facing particles keep one world-space simulation result.
+        // Each view constructs its own corners from that centre in the shader.
+        float scale = 1.0 / length(transpose(mat3(inverse(model_view)))[0]);
+        eye.xy += (texcoords.xy - vec2(0.5)) * vec2(1.0, -1.0) * metadata.w * scale;
+    }
+    vec3 normal = has_normals ? normal_matrix * vertex_normal : vec3(0.0, 0.0, -1.0);
+    int material = wzMaterialBase(metadata.x);
+    vec4 info_mapping = wzShading(material + 5);
+    int channels = wzChannels(material);
+#ifndef WZ_PER_PIXEL
+    WzLit lit = wzLight(eye.xyz, normal, metadata.x, metadata.z, vertex_color,
+                        diffuse_multiplier, specular_multiplier);
+    result.diffuse = lit.diffuse;
+    result.specular = lit.specular;
+#else
+    result.diffuse = vec4(1.0);
+    result.specular = vec4(0.0);
+#endif
+    result.normal = normal;
+
     // Stage 0 mapping applies only to corners that share the vertex's own UV
     // (the native dedup path copies raw table coordinates to the others).
     vec2 uv = (draw_flags & WZ_HAS_TEXCOORD0) != 0 ? texcoords.xy : vec2(0.0);
-    if (index_material_alpha.z != 0.0 && (channels & WZ_ST0) != 0) {
+    if (metadata.y != 0.0 && (channels & WZ_ST0) != 0) {
         int mapping = int(info_mapping.x);
         if (mapping == 1)
             uv = (normal.xy + 1.0) * 0.5;

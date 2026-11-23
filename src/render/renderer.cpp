@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -76,6 +77,7 @@
 #include <vsg/vk/Context.h>
 #include <vsg/vk/DescriptorPools.h>
 #include <vsg/vk/Device.h>
+#include <vsg/vk/DeviceFeatures.h>
 #include <vsg/vk/DeviceMemory.h>
 #include <vsg/vk/Framebuffer.h>
 #include <vsg/vk/Instance.h>
@@ -91,6 +93,7 @@
 #include "overlay_vert.spv.h"
 #include "wiz8/platform/timer.h"
 #include "wiz8/render/compositor.h"
+#include "wiz8/render/graphics_settings.h"
 #include "wiz8/render/texture.h"
 #include "wiz8/render/vsg_material.h"
 #include "wiz8/surface_storage.h"
@@ -254,6 +257,19 @@ Renderer::Impl::Impl(SDL_Window* platform_window) : platform_window(platform_win
     // The canvas and retail lighting already contain display-space color.
     traits->swapchainPreferences.surfaceFormat = {VK_FORMAT_B8G8R8A8_UNORM,
                                                   VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+    const auto& graphics = CurrentGraphicsSettings();
+    // VSG picks the highest supported count at or below the request and
+    // overrides every pipeline's multisample state to match the window pass.
+    if (graphics.msaa > 1)
+        traits->samples =
+            static_cast<VkSampleCountFlags>(
+                (1u << (std::bit_width(static_cast<unsigned>(std::min(graphics.msaa, 64))))) - 1u) &
+            ~VkSampleCountFlags{VK_SAMPLE_COUNT_1_BIT};
+    if (graphics.anisotropy > 1.0f) {
+        traits->deviceFeatures = vsg::DeviceFeatures::create();
+        traits->deviceFeatures->get().samplerAnisotropy = VK_TRUE;
+        traits->deviceFeatures->get().sampleRateShading = VK_TRUE;
+    }
     Uint32 count = 0;
     const auto* names = SDL_Vulkan_GetInstanceExtensions(&count);
     if (!names) throw std::runtime_error(SDL_GetError());
@@ -274,7 +290,8 @@ Renderer::Impl::Impl(SDL_Window* platform_window) : platform_window(platform_win
     capture_window = (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
     if (capture_window) traits->swapchainPreferences.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     window->getOrCreateSwapchain();
-    context = std::make_unique<render::RenderContext>(window->extent2D());
+    context = std::make_unique<render::RenderContext>(
+        window->extent2D(), static_cast<int>(window->framebufferSamples()));
 
     overlay_set_layout = vsg::DescriptorSetLayout::create(vsg::DescriptorSetLayoutBindings{
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}});
@@ -306,12 +323,15 @@ void Renderer::Impl::createOffscreen()
 {
     auto device = window->getOrCreateDevice();
     const auto extent = window->extent2D();
-    const auto image = [&](VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect) {
+    const auto samples = window->framebufferSamples();
+    const auto image = [&](VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                           VkSampleCountFlagBits sample_count = VK_SAMPLE_COUNT_1_BIT) {
         auto result = vsg::Image::create();
         result->imageType = VK_IMAGE_TYPE_2D;
         result->format = format;
         result->extent = {extent.width, extent.height, 1};
         result->mipLevels = result->arrayLayers = 1;
+        result->samples = sample_count;
         result->usage = usage;
         return vsg::createImageView(device, result, aspect);
     };
@@ -319,18 +339,28 @@ void Renderer::Impl::createOffscreen()
                        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                        VK_IMAGE_ASPECT_COLOR_BIT);
     auto depth = image(window->depthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                       VK_IMAGE_ASPECT_DEPTH_BIT);
+                       VK_IMAGE_ASPECT_DEPTH_BIT, samples);
     offscreen_color = color->image;
+    // A multisampled window pass renders into a multisampled color image and
+    // resolves into the presented one; the offscreen pass mirrors its layout
+    // so the same compiled pipelines draw into both.
+    vsg::ImageViews views{color, depth};
+    if (samples != VK_SAMPLE_COUNT_1_BIT)
+        views = {
+            image(window->surfaceFormat().format,
+                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                  VK_IMAGE_ASPECT_COLOR_BIT, samples),
+            color, depth};
     // The offscreen pass has the same attachment formats as the window pass.
     // Its final color layout permits screenshots without acquiring a swapchain
     // image or presenting an automap/model-preview frame to the player.
     auto window_pass = window->getOrCreateRenderPass();
     auto attachments = window_pass->attachments;
-    attachments[0].finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    attachments[samples == VK_SAMPLE_COUNT_1_BIT ? 0 : 1].finalLayout =
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     auto pass = vsg::RenderPass::create(device, attachments, window_pass->subpasses,
                                         window_pass->dependencies);
-    auto framebuffer = vsg::Framebuffer::create(pass, vsg::ImageViews{color, depth}, extent.width,
-                                                extent.height, 1);
+    auto framebuffer = vsg::Framebuffer::create(pass, views, extent.width, extent.height, 1);
     offscreen_graph = vsg::RenderGraph::create();
     offscreen_graph->framebuffer = framebuffer;
     offscreen_graph->renderArea = {{0, 0}, extent};

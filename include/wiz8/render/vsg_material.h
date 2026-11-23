@@ -37,7 +37,7 @@ namespace render {
 // may use their own layouts, pipelines and view state in the same scene.
 class RenderContext {
 public:
-    explicit RenderContext(VkExtent2D extent);
+    explicit RenderContext(VkExtent2D extent, int samples = 1);
 
     vsg::ref_ptr<vsg::PipelineLayout> layout;
     vsg::ref_ptr<vsg::DescriptorSetLayout> view_layout;

@@ -50,6 +50,7 @@
 #include "wiz8/render/draw_inputs.h"
 #include "wiz8/render/draw_shader.h"
 #include "wiz8/render/fog.h"
+#include "wiz8/render/graphics_settings.h"
 #include "wiz8/render/light.h"
 #include "wiz8/render/material.h"
 #include "wiz8/render/mesh.h"
@@ -57,6 +58,8 @@
 #include "wiz8/render/texture.h"
 #include "wiz8/render/vertex_channels.h"
 #include "world_frag.spv.h"
+#include "world_ppl_frag.spv.h"
+#include "world_ppl_vert.spv.h"
 #include "world_vert.spv.h"
 
 namespace render {
@@ -106,7 +109,8 @@ void packMaterial(Material& material, double time, std::span<glm::vec4> out)
 }
 } // namespace
 
-RenderContext::RenderContext(VkExtent2D extent) : viewport(vsg::ViewportState::create(extent))
+RenderContext::RenderContext(VkExtent2D extent, int samples)
+    : viewport(vsg::ViewportState::create(extent))
 {
     using Bindings = vsg::DescriptorSetLayoutBindings;
     constexpr auto vertex = VK_SHADER_STAGE_VERTEX_BIT;
@@ -115,8 +119,11 @@ RenderContext::RenderContext(VkExtent2D extent) : viewport(vsg::ViewportState::c
     constexpr auto storage = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     view_layout =
         vsg::DescriptorSetLayout::create(Bindings{{0, storage, 1, vertex | fragment, nullptr}});
-    instance_layout = vsg::DescriptorSetLayout::create(Bindings{{0, uniform, 1, vertex, nullptr}});
-    pass_layout = vsg::DescriptorSetLayout::create(Bindings{{0, storage, 1, vertex, nullptr}});
+    // Per-pixel lighting evaluates the material and light rules in the fragment stage.
+    instance_layout =
+        vsg::DescriptorSetLayout::create(Bindings{{0, uniform, 1, vertex | fragment, nullptr}});
+    pass_layout =
+        vsg::DescriptorSetLayout::create(Bindings{{0, storage, 1, vertex | fragment, nullptr}});
     batch_layout = vsg::DescriptorSetLayout::create(
         Bindings{{0, uniform, 1, vertex | fragment, nullptr},
                  {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fragment, nullptr},
@@ -127,8 +134,16 @@ RenderContext::RenderContext(VkExtent2D extent) : viewport(vsg::ViewportState::c
     const auto module = [](std::span<const std::uint32_t> code) {
         return vsg::ShaderModule::create(vsg::ShaderModule::SPIRV(code.begin(), code.end()));
     };
-    stages = {vsg::ShaderStage::create(vertex, "main", module(world_vert)),
-              vsg::ShaderStage::create(fragment, "main", module(world_frag))};
+    const auto& graphics = CurrentGraphicsSettings();
+    if (graphics.per_pixel_lighting)
+        stages = {vsg::ShaderStage::create(vertex, "main", module(world_ppl_vert)),
+                  vsg::ShaderStage::create(fragment, "main", module(world_ppl_frag))};
+    else
+        stages = {vsg::ShaderStage::create(vertex, "main", module(world_vert)),
+                  vsg::ShaderStage::create(fragment, "main", module(world_frag))};
+    stages[1]->specializationConstants[0] =
+        vsg::uintValue::create(graphics.alpha_to_coverage && samples > 1 ? 1u : 0u);
+    stages[1]->specializationConstants[1] = vsg::intValue::create(samples);
     auto pixel = vsg::ubvec4Array2D::create(1, 1, vsg::Data::Properties{VK_FORMAT_R8G8B8A8_UNORM});
     pixel->at(0, 0) = vsg::ubvec4(255, 255, 255, 255);
     white = vsg::ImageInfo::create(vsg::Sampler::create(), pixel);

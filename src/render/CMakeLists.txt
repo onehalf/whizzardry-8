@@ -3,6 +3,7 @@ set(NATIVE_RENDER_SOURCES
     camera.cpp
     clip_plane.cpp
     effects/fog.cpp
+    graphics_settings.cpp
     pipeline/draw_inputs.cpp
     renderer.cpp
     vsg_material.cpp
@@ -39,17 +40,28 @@ find_program(GLSLANG_VALIDATOR NAMES glslangValidator glslangValidator.exe REQUI
 set(VSG_SHADER_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(VSG_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/vsg_shaders")
 set(VSG_SHADER_HEADERS)
-foreach(shader world overlay)
+# Each variant is a shader source compiled with optional preprocessor defines.
+set(VSG_SHADER_VARIANTS "world|world|" "world_ppl|world|-DWZ_PER_PIXEL" "overlay|overlay|")
+foreach(variant ${VSG_SHADER_VARIANTS})
+    string(REPLACE "|" ";" parts "${variant}")
+    list(GET parts 0 name)
+    list(GET parts 1 shader)
+    list(LENGTH parts part_count)
+    set(defines)
+    if(part_count GREATER 2)
+        list(GET parts 2 defines)
+    endif()
     foreach(stage vert frag)
-        set(header "${VSG_SHADER_DIR}/${shader}_${stage}.spv.h")
+        set(header "${VSG_SHADER_DIR}/${name}_${stage}.spv.h")
         add_custom_command(
             OUTPUT "${header}"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${VSG_SHADER_DIR}"
-            COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.0
-                "-I${VSG_SHADER_SOURCE_DIR}" --vn ${shader}_${stage}
+            COMMAND "${GLSLANG_VALIDATOR}" -V --target-env vulkan1.0 ${defines}
+                "-I${VSG_SHADER_SOURCE_DIR}" --vn ${name}_${stage}
                 -o "${header}" "${VSG_SHADER_SOURCE_DIR}/${shader}.${stage}"
             DEPENDS "${VSG_SHADER_SOURCE_DIR}/${shader}.${stage}"
                 "${VSG_SHADER_SOURCE_DIR}/world_blocks.glsl"
+                "${VSG_SHADER_SOURCE_DIR}/world_host.glsl"
                 "${VSG_SHADER_SOURCE_DIR}/wizardry_vertex.glsl"
                 "${VSG_SHADER_SOURCE_DIR}/wizardry_fragment.glsl"
             VERBATIM)

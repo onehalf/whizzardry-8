@@ -45,7 +45,7 @@
 
 #include "../native/surface_pixels.h"
 #include "temporary_directory.h"
-#include "wiz8/application.h"
+#include "wiz8//application.h"
 #include "wiz8/asset_paths.h"
 #include "wiz8/audio/audio_test.h"
 #include "wiz8/cursor.h"
@@ -64,6 +64,7 @@
 #include "wiz8/local_screens/OptionsScreen.h"
 #include "wiz8/mgs_commands.h"
 #include "wiz8/platform/input.h"
+#include "wiz8/platform/window.h"
 #include "wiz8/render/frame.h"
 #include "wiz8/render/renderer.h"
 #include "wiz8/rules/party.h"
@@ -220,6 +221,12 @@ GameHarness::GameHarness(bool play_movies, bool native_object)
     // repeatable: CTest fixes it, and failures print it.
     application_->games().seed(Catch::getSeed());
     window_ = reinterpret_cast<SDL_Window*>(ghWindow);
+    // Renders scenarios at a larger window size to inspect render quality.
+    if (const char* size = SDL_getenv("WIZ8_RUNTIME_WINDOW")) {
+        int width = 0, height = 0;
+        if (std::sscanf(size, "%dx%d", &width, &height) == 2)
+            REQUIRE(ConfigureGameWindow(window_, false, width, height));
+    }
     REQUIRE(window_);
     SDL_Event focus{};
     focus.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
@@ -667,6 +674,13 @@ void Snapshot(const char* name, const std::vector<unsigned>& pixels)
     const fs::path directory = ArtifactDirectory();
     if (!directory.empty())
         SaveImage(directory / (std::string(name) + ".png"), pixels, SCREEN_WIDTH);
+    if (!directory.empty() && g_renderer && SDL_getenv("WIZ8_RUNTIME_WINDOW")) {
+        try {
+            if (SDL_Surface* full = g_renderer->captureLastFrame())
+                SDL_SaveBMP(full, (directory / (std::string(name) + "-full.bmp")).string().c_str());
+        } catch (const std::exception&) {
+        }
+    }
 }
 
 namespace {
