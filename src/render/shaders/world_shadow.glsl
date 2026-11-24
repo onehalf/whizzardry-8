@@ -41,7 +41,7 @@ float wzSunShadow(vec3 eye, vec3 normal, bool has_normal)
     float facing = has_normal ? dot(normal, sun.xyz) : 1.0;
     // Faces turned from the sun are in their own shadow; this also hides
     // acne where the shadow map meets the terminator.
-    float self_shadow = has_normal ? smoothstep(0.0, -0.3, facing) : 0.0;
+    float self_shadow = has_normal ? smoothstep(0.0, 0.3, -facing) : 0.0;
     float distance = length(eye);
     if (distance >= header.w) return self_shadow;
     vec3 lean = has_normal ? normal * (facing < 0.0 ? -1.0 : 1.0) : sun.xyz;
