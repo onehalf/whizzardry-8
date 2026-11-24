@@ -293,7 +293,8 @@ struct W8LevelRuntimeBlock {
     /* The party-death or ending screen is up, from its first fade until the
        closing fade's EndReviewTransition. */
     bool review_transition_active;
-    /* A BeginScreenFade ramp is in progress; the main game's frame advances it. */
-    bool screen_fade_running;
+    /* The quad of a BeginScreenFade ramp in progress; the main game's frame
+       advances it. */
+    std::unique_ptr<OverlayQuad> screen_fade;
     uint64_t countdown5;
 };

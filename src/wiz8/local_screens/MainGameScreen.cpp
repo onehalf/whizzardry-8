@@ -2405,7 +2405,7 @@ void MainGameScreen::frame()
         pointer.reset();
     }
     // A screen fade, and the party-death or ending screen it leads to, takes the frame.
-    if (MainGameHud()->screen_fade_running) {
+    if (MainGameHud()->screen_fade) {
         if (UpdateScreenFade()) return;
     } else if (MainGameHud()->review_transition_active) {
         // The review transition holds the world, so its time is not stepped later.

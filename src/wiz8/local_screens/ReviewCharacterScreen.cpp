@@ -142,7 +142,6 @@ std::uint64_t g_fade_tick_base;
 void (*g_fade_callback)(void);
 unsigned char g_fade_flag;
 unsigned int g_fade_duration;
-std::unique_ptr<OverlayQuad> g_fade_overlay;
 int g_fade_out;
 wiz8::sound::Playback g_ending_sound;
 bool g_ending_screen;
@@ -1123,7 +1122,6 @@ void BeginScreenFade(int fade_to_black, int fade_out, int duration, void (*callb
     g_fade_out = fade_out;
     g_fade_callback = callback;
     g_fade_flag = render_each_tick;
-    MainGameHud()->screen_fade_running = true;
     if (fullscreen_scene_last) {
         SetFullscreenSceneLast(1);
     }
@@ -1137,10 +1135,11 @@ void BeginScreenFade(int fade_to_black, int fade_out, int duration, void (*callb
         color.z = 0.0f;
     }
     color.w = 1.0f;
-    g_fade_overlay = makeColorOverlay(0x280, 0x1e0, color, true);
-    positionOverlay(g_fade_overlay.get(), 0, 0, false);
-    g_fade_overlay->material.blend = fade_to_black ? OverlayBlend::Additive : OverlayBlend::Fade;
-    g_fade_overlay->color.a = fade_out != 0 ? 1.0f : 0.0f;
+    auto& fade = MainGameHud()->screen_fade;
+    fade = makeColorOverlay(0x280, 0x1e0, color, true);
+    positionOverlay(fade.get(), 0, 0, false);
+    fade->material.blend = fade_to_black ? OverlayBlend::Additive : OverlayBlend::Fade;
+    fade->color.a = fade_out != 0 ? 1.0f : 0.0f;
     g_fade_tick_base = MonotonicMilliseconds();
 }
 
@@ -1151,18 +1150,19 @@ void BeginScreenFade(int fade_to_black, int fade_out, int duration, void (*callb
    released and the stored callback runs. Returns g_fade_flag. */
 unsigned char UpdateScreenFade(void)
 {
-    if (!MainGameHud()->screen_fade_running) {
+    if (!MainGameHud()->screen_fade) {
         return 0;
     }
     std::uint64_t elapsed = MonotonicMilliseconds() - g_fade_tick_base;
     if (g_fade_duration < elapsed) {
-        MainGameHud()->screen_fade_running = false;
+        // The ramp ends here; the quad stays drawn for the closing frames.
+        auto fade = std::move(MainGameHud()->screen_fade);
         if (g_fade_out == 0) {
-            g_fade_overlay->color.a = 1.0f;
+            fade->color.a = 1.0f;
             PresentGameFrame(GameInProgress() ? &CurrentGame() : nullptr);
             PresentGameFrame(GameInProgress() ? &CurrentGame() : nullptr);
         }
-        g_fade_overlay.reset();
+        fade.reset();
         SetFullscreenSceneLast(0);
         if (g_fade_callback != 0) {
             g_fade_callback();
@@ -1170,7 +1170,7 @@ unsigned char UpdateScreenFade(void)
         return g_fade_flag;
     }
     float progress = static_cast<float>(elapsed) / g_fade_duration;
-    OverlayQuad* material = g_fade_overlay.get();
+    OverlayQuad* material = MainGameHud()->screen_fade.get();
     if (g_fade_out == 0) {
         material->color.a = progress;
     } else {
@@ -1215,7 +1215,7 @@ void PumpReviewTransition(void)
     InputEvent input;
     bool exit_review;
 
-    if (!MainGameHud()->review_transition_active || MainGameHud()->screen_fade_running) {
+    if (!MainGameHud()->review_transition_active || MainGameHud()->screen_fade) {
         return;
     }
     if (g_ending_autosave) {
