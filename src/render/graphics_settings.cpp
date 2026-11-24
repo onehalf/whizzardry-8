@@ -26,7 +26,8 @@ GraphicsSettings GraphicsSettings::retail()
             .anisotropy = 1.0f,
             .per_pixel_lighting = false,
             .alpha_to_coverage = false,
-            .hdr = false};
+            .hdr = false,
+            .shadows = 0.0f};
 }
 
 GraphicsSettings GraphicsSettings::with(std::string_view spec) const
@@ -72,6 +73,15 @@ GraphicsSettings GraphicsSettings::with(std::string_view spec) const
             result.contrast = parseFloat(value, result.contrast);
         else if (name == "debug")
             result.post_debug = static_cast<int>(parseFloat(value, 0.0f));
+        else if (name == "shadows")
+            result.shadows = parseFloat(value, result.shadows);
+        else if (name == "shadow_size")
+            result.shadow_size =
+                static_cast<int>(parseFloat(value, static_cast<float>(result.shadow_size)));
+        else if (name == "shadow_distance")
+            result.shadow_distance = parseFloat(value, result.shadow_distance);
+        else if (name == "sun_tilt")
+            result.sun_tilt = parseFloat(value, result.sun_tilt);
         else if (name == "shoulder")
             result.shoulder = parseFloat(value, result.shoulder);
         else

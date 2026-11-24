@@ -20,13 +20,24 @@ struct GraphicsSettings {
     float exposure = 1.0f;
     float saturation = 1.08f;
     float contrast = 1.04f;
-    int post_debug = 0;         // 1 shows ambient occlusion, 2 bloom
+    int post_debug = 0;         // 1 shows ambient occlusion, 2 bloom, 3 sun shadow
     float shoulder = 0.8f;      // tone curve stays linear below this
+    // Sun shadows on outdoor levels: how much of the sky light a shadow takes away; 0 disables.
+    float shadows = 0.6f;
+    int shadow_size = 4096; // shadow atlas edge in texels (four cascades)
+    float shadow_distance = 40000.0f; // eye-space reach of the last cascade
+    float sun_tilt = 25.0f; // degrees the sun's arc leans off the zenith
 
     static GraphicsSettings retail();
     // Applies `name=value` items (and `retail`) from `spec` over this value.
     GraphicsSettings with(std::string_view spec) const;
 };
+
+// Sun shadows need the HDR pipeline (which owns the shadow atlas) and per-pixel lighting.
+inline bool SunShadowsEnabled(const GraphicsSettings& settings)
+{
+    return settings.shadows > 0.0f && settings.hdr && settings.per_pixel_lighting;
+}
 
 // The process's settings: defaults overridden by the WIZ8_GFX environment variable.
 const GraphicsSettings& CurrentGraphicsSettings();

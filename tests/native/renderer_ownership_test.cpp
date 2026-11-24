@@ -362,7 +362,8 @@ TEST_CASE("Cached views retain compiled resources while camera and scene inputs 
     // indices retain their compiled allocation. View descriptors grow only
     // when additional view records need more space.
     geometry->indexCount = 6;
-    for (int index = 0; index < 8; ++index)
+    // Enough planes to pass the view block's power-of-two capacity.
+    for (int index = 0; index < 16; ++index)
         scene.clip_planes.push_back(std::make_unique<ClipPlane>());
     REQUIRE(scene.createView(context, &camera, {}, viewport, 3) == view);
     REQUIRE(view->viewDependentState == state);

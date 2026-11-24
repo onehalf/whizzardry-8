@@ -119,6 +119,9 @@ int wzChannels(int material)
 // Wizardry's lighting, fog and depth cue at one eye-space point. The vertex
 // stage evaluates it per vertex as retail did; the per-pixel variant runs the
 // same rules in the fragment stage on interpolated positions and normals.
+// The share of sky light reaching the surface; per-pixel sun shadows lower it.
+float wz_sky_light = 1.0;
+
 WzLit wzLight(vec3 eye, vec3 normal, float material_index, float vertex_alpha,
               vec4 vertex_color, vec4 diffuse_multiplier, vec4 specular_multiplier)
 {
@@ -139,8 +142,11 @@ WzLit wzLight(vec3 eye, vec3 normal, float material_index, float vertex_alpha,
     WzLit result;
 
     vec4 ambient_light = wzShading(0);
-    vec4 base = ambient_light * info_ambient + info_emissive;
+    // Sun shadows dim the sky light: ambient and baked vertex light, not
+    // emissive surfaces or the scene's own lights.
+    vec4 base = ambient_light * info_ambient;
     if ((draw_flags & WZ_HAS_COLORS) != 0) base += vec4(vertex_color.rgb, 1.0);
+    base = vec4(base.rgb * wz_sky_light, base.a) + info_emissive;
     vec4 diffuse = vec4(0.0);
     vec4 specular = vec4(0.0);
     float alpha = 1.0;
@@ -173,7 +179,7 @@ WzLit wzLight(vec3 eye, vec3 normal, float material_index, float vertex_alpha,
         if (attenuation == 0.0) continue;
         if ((enabled & WZ_LIGHT_AMBIENT) != 0) {
             if (!diffuse_ready) { diffuse = base; diffuse_ready = true; }
-            diffuse += (wzShading(light_base + 1) * info_ambient) * attenuation;
+            diffuse += (wzShading(light_base + 1) * info_ambient) * (attenuation * wz_sky_light);
         }
         if ((enabled & (WZ_LIGHT_DIFFUSE | WZ_SPECULAR)) == 0) continue;
         float facing = directional ? clamp(dot(normal, direction), 0.0, 1.0)

@@ -233,11 +233,82 @@ struct PostProcess::Targets {
     vsg::ref_ptr<vsg::ubyteArray> composite_push;
 };
 
+namespace {
+constexpr VkFormat kShadowFormat = VK_FORMAT_D32_SFLOAT;
+
+// Depth only; the atlas ends ready for sampling by the world pass.
+vsg::ref_ptr<vsg::RenderPass> shadowPass(vsg::Device* device)
+{
+    vsg::AttachmentDescription depth{};
+    depth.format = kShadowFormat;
+    depth.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    vsg::SubpassDescription subpass;
+    subpass.depthStencilAttachments.push_back(
+        {0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL});
+    constexpr auto tests =
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    vsg::SubpassDependency before{};
+    before.srcSubpass = VK_SUBPASS_EXTERNAL;
+    before.dstSubpass = 0;
+    before.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | tests;
+    before.dstStageMask = tests;
+    before.srcAccessMask = 0;
+    before.dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    vsg::SubpassDependency after{};
+    after.srcSubpass = 0;
+    after.dstSubpass = VK_SUBPASS_EXTERNAL;
+    after.srcStageMask = tests;
+    after.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    after.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    return vsg::RenderPass::create(device, vsg::RenderPass::Attachments{depth},
+                                   vsg::RenderPass::Subpasses{subpass},
+                                   vsg::RenderPass::Dependencies{before, after});
+}
+} // namespace
+
 PostProcess::PostProcess(vsg::ref_ptr<vsg::Device> device, VkSampleCountFlagBits samples,
                          VkFormat depth_format, const GraphicsSettings& settings)
     : device_(std::move(device)), samples_(samples), depth_format_(depth_format),
       settings_(settings)
 {
+    if (!SunShadowsEnabled(settings_)) return;
+    const auto size = static_cast<std::uint32_t>(std::max(settings_.shadow_size, 64));
+    auto atlas =
+        makeImage(kShadowFormat, {size, size},
+                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    auto view = vsg::createImageView(device_.get(), atlas, VK_IMAGE_ASPECT_DEPTH_BIT);
+    shadow_graph_ = vsg::RenderGraph::create();
+    shadow_graph_->framebuffer =
+        vsg::Framebuffer::create(shadowPass(device_.get()), vsg::ImageViews{view}, size, size, 1);
+    shadow_graph_->renderArea = {{0, 0}, {size, size}};
+    shadow_graph_->viewportState = vsg::ViewportState::create(VkExtent2D{size, size});
+    shadow_graph_->windowResizeHandler = {};
+    // Set by hand: VSG takes an attachment for depth only by an attachment-optimal final layout.
+    shadow_graph_->clearValues.resize(1);
+    shadow_graph_->clearValues[0].depthStencil = {1.0f, 0};
+    shadow_info_ = vsg::ImageInfo::create(makeSampler(VK_FILTER_NEAREST), view,
+                                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+}
+
+void PostProcess::frameSubmitted()
+{
+    // That frame cleared the atlas into its sampled layout.
+    shadow_ready_ = shadow_ready_ || shadow_recorded_;
+}
+
+void PostProcess::addShadowView(vsg::ref_ptr<vsg::View> view)
+{
+    if (!shadow_graph_) return;
+    shadow_views_.push_back(std::move(view));
+    buildFrameCommands();
 }
 
 PostProcess::~PostProcess() = default;
@@ -447,6 +518,8 @@ void PostProcess::resize(VkExtent2D extent)
 void PostProcess::beginFrame(const glm::vec4& clear)
 {
     views_.clear();
+    shadow_views_.clear();
+    shadow_recorded_ = false;
     if (targets_) setClearValues(*targets_->scene, clear);
     buildFrameCommands();
 }
@@ -519,6 +592,13 @@ vsg::ref_ptr<vsg::View> PostProcess::addView(vsg::ref_ptr<vsg::View> view)
 void PostProcess::buildFrameCommands()
 {
     root_->children.clear();
+    // The atlas is bound to every world view, so it is cleared into its
+    // sampled layout once even before any view casts into it.
+    if (shadow_graph_ && (!shadow_views_.empty() || !shadow_ready_)) {
+        shadow_graph_->children.assign(shadow_views_.begin(), shadow_views_.end());
+        root_->addChild(shadow_graph_);
+        shadow_recorded_ = true;
+    }
     if (!targets_ || views_.empty()) return;
     auto& targets = *targets_;
     targets.scene->children.assign(views_.begin(), views_.end());

@@ -55,6 +55,20 @@ public:
                                                      Winding winding = Winding::Standard,
                                                      std::int32_t polygon_offset = 0,
                                                      Target target = Target::Scene);
+    // The depth-only pipeline that draws a scene pipeline's geometry into the
+    // sun shadow atlas, or null when that geometry casts no shadow.
+    vsg::ref_ptr<vsg::BindGraphicsPipeline>
+    shadowPipeline(const vsg::BindGraphicsPipeline* scene) const;
+    // Every shadow pipeline made so far, for compiling them in shadow views.
+    std::vector<vsg::ref_ptr<vsg::BindGraphicsPipeline>> shadowPipelines() const
+    {
+        std::vector<vsg::ref_ptr<vsg::BindGraphicsPipeline>> result;
+        for (const auto& [scene, shadow] : shadow_pipelines) result.push_back(shadow);
+        return result;
+    }
+    // The sampled sun shadow atlas. Set before any view state is created;
+    // a 1x1 "nothing shadowed" image stands in without one.
+    void setShadowMap(vsg::ref_ptr<vsg::ImageInfo> image) { shadow_map = std::move(image); }
     vsg::ref_ptr<vsg::ImageInfo> texture(Texture* source, int reduction = 0);
     vsg::ref_ptr<vsg::BindDescriptorSet> descriptor(std::uint32_t set,
                                                     vsg::ref_ptr<vsg::Data> data);
@@ -64,6 +78,10 @@ public:
 
 private:
     vsg::ShaderStages stages;
+    vsg::ShaderStages shadow_stages;
+    std::map<const vsg::BindGraphicsPipeline*, vsg::ref_ptr<vsg::BindGraphicsPipeline>>
+        shadow_pipelines;
+    vsg::ref_ptr<vsg::ImageInfo> shadow_map;
     vsg::ref_ptr<vsg::ViewportState> viewport;
     std::map<std::tuple<std::uint32_t, FaceCull, Winding, std::int32_t, Target>,
              vsg::ref_ptr<vsg::BindGraphicsPipeline>>

@@ -11,6 +11,7 @@ layout(set = 3, binding = 2) uniform sampler2D detail_texture;
 #include "wizardry_fragment.glsl"
 #ifdef WZ_PER_PIXEL
 #include "wizardry_vertex.glsl"
+#include "world_shadow.glsl"
 #endif
 
 layout(location = 0) in vec4 v_diffuse;
@@ -43,7 +44,11 @@ void main()
 #ifdef WZ_PER_PIXEL
     eye_center = v_object.xyz;
     eye_radius = v_object.w;
-    vec3 normal = wzDraw(0).z != 0.0 ? normalize(v_normal) : vec3(0.0, 0.0, -1.0);
+    bool has_normal = wzDraw(0).z != 0.0;
+    vec3 normal = has_normal ? normalize(v_normal) : vec3(0.0, 0.0, -1.0);
+    float sun_shadow = wzSunShadow(v_eye, normal, has_normal);
+    float shadow_strength = view.values[WZ_SHADOW_BASE].y;
+    wz_sky_light = 1.0 - max(shadow_strength, 0.0) * sun_shadow;
     WzLit lit = wzLight(v_eye, normal, v_material, v_alpha, v_color, v_diffuse_multiplier,
                         v_specular_multiplier);
     vec4 color = wzCombine(texture(material_texture, v_st0), lit.diffuse, lit.specular);
@@ -65,5 +70,10 @@ void main()
             discard;
         }
     }
+#ifdef WZ_PER_PIXEL
+#endif
+#ifdef WZ_PER_PIXEL
+    if (shadow_strength < 0.0) color.rgb = vec3(1.0 - sun_shadow);
+#endif
     out_color = color;
 }

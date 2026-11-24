@@ -1,8 +1,10 @@
 #include "wiz8/render/world_scene.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
@@ -50,9 +52,11 @@
 #include <vulkan/vulkan_core.h>
 
 #include "glm/common.hpp"
+#include "glm/ext/matrix_clip_space.hpp"
 #include "glm/ext/matrix_double4x4.hpp"
 #include "glm/ext/matrix_float3x3.hpp"
 #include "glm/ext/matrix_float4x4.hpp"
+#include "glm/ext/matrix_transform.hpp"
 #include "glm/ext/vector_double4.hpp"
 #include "glm/ext/vector_float3.hpp"
 #include "glm/ext/vector_float4.hpp"
@@ -62,6 +66,7 @@
 #include "wiz8/render/clip_plane.h"
 #include "wiz8/render/draw_inputs.h"
 #include "wiz8/render/fog.h"
+#include "wiz8/render/graphics_settings.h"
 #include "wiz8/render/ground_shadow.h"
 #include "wiz8/render/light.h"
 #include "wiz8/render/mesh.h"
@@ -318,6 +323,65 @@ private:
     std::uint32_t opaque_cursor = 0;
 };
 
+// A sun shadow cascade's view. Wizardry geometry records its depth-only
+// shadow pipeline; the view binds no game view set, which those never read.
+class ShadowViewState : public vsg::Inherit<vsg::ViewDependentState, ShadowViewState> {
+public:
+    ShadowViewState(vsg::View* view, RenderContext& context)
+        : Inherit(view), context(context), context_layout(context.layout)
+    {
+    }
+    bool usesContext(const RenderContext& candidate) const
+    {
+        return context_layout == candidate.layout;
+    }
+    void traverse(vsg::Visitor& visitor) override
+    {
+        if (descriptorSet) vsg::ViewDependentState::traverse(visitor);
+    }
+    void traverse(vsg::ConstVisitor& visitor) const override
+    {
+        if (descriptorSet) vsg::ViewDependentState::traverse(visitor);
+    }
+    void bindDescriptorSets(vsg::CommandBuffer& command, VkPipelineBindPoint bind_point,
+                            VkPipelineLayout layout, std::uint32_t first_set) override
+    {
+        if (layout != context.layout->vk(command.deviceID))
+            vsg::ViewDependentState::bindDescriptorSets(command, bind_point, layout, first_set);
+    }
+    RenderContext& context;
+    vsg::ref_ptr<vsg::PipelineLayout> context_layout;
+};
+
+ShadowViewState* shadowState(vsg::RecordTraversal& traversal)
+{
+    return dynamic_cast<ShadowViewState*>(traversal.viewDependentState.get());
+}
+
+/* The world graph as a shadow view sees it. Recording draws the graph (its
+   draws switch to shadow pipelines); compiling and resource collection visit
+   only the shadow pipelines, so no colour pipeline is ever compiled against
+   the depth-only pass. Geometry and descriptors are compiled by the world's
+   own views. */
+class ShadowCasters : public vsg::Inherit<vsg::Node, ShadowCasters> {
+public:
+    ShadowCasters(vsg::ref_ptr<vsg::Node> graph, RenderContext& context)
+        : graph(std::move(graph)), context(&context)
+    {
+    }
+    void accept(vsg::RecordTraversal& traversal) const override { graph->accept(traversal); }
+    void traverse(vsg::Visitor& visitor) override
+    {
+        for (auto& pipeline : context->shadowPipelines()) pipeline->accept(visitor);
+    }
+    void traverse(vsg::ConstVisitor& visitor) const override
+    {
+        for (auto& pipeline : context->shadowPipelines()) pipeline->accept(visitor);
+    }
+    vsg::ref_ptr<vsg::Node> graph;
+    RenderContext* context;
+};
+
 WorldViewState* viewState(vsg::RecordTraversal& traversal)
 {
     return dynamic_cast<WorldViewState*>(traversal.viewDependentState.get());
@@ -444,6 +508,25 @@ DrawNode::DrawNode(vsg::ref_ptr<vsg::VertexIndexDraw> geometry,
 void DrawNode::accept(vsg::RecordTraversal& traversal) const
 {
     if (!draw->indexCount) return;
+    if (auto* shadow = shadowState(traversal)) {
+        // Translucent and non-depth-writing geometry casts no sun shadow.
+        if (sorted) return;
+        auto commands = stateCommands;
+        bool casts = false;
+        for (auto& command : commands)
+            if (const auto* pipeline = command->cast<vsg::BindGraphicsPipeline>()) {
+                auto replacement = shadow->context.shadowPipeline(pipeline);
+                casts = replacement != nullptr;
+                command = replacement;
+                break;
+            }
+        if (!casts) return;
+        auto& state = *traversal.getState();
+        state.push(commands);
+        draw->accept(traversal);
+        state.pop(commands);
+        return;
+    }
     if (sorted) {
         if (auto* state = viewState(traversal)) {
             state->addSorted(*this, traversal.getState()->modelviewMatrixStack.top());
@@ -540,6 +623,96 @@ struct WorldScene::CachedView {
     vsg::ref_ptr<render::ViewMatrix> view_matrix;
     vsg::ref_ptr<vsg::StateGroup> translucent;
 };
+
+// Four cascades in the quadrants of the renderer's shadow atlas.
+struct WorldScene::SunShadows {
+    ShadowCascades cascades;
+    std::vector<vsg::ref_ptr<vsg::View>> views;
+    std::vector<vsg::ref_ptr<render::Projection>> projections;
+    std::vector<vsg::ref_ptr<render::ViewMatrix>> view_matrices;
+    vsg::ref_ptr<vsg::Node> casters;
+    const void* layout = nullptr;
+    std::uint64_t frame = ~std::uint64_t{0};
+    std::size_t active = 0;
+};
+
+namespace {
+/* Fits the cascades to the eye's view frustum. Each cascade is a sphere
+   around a slice of the frustum, so its size does not change as the view
+   turns, and its centre snaps to whole shadow texels in a world-fixed light
+   basis, so shadow edges hold still while the party moves. */
+void fitCascades(const DrawTransform& eye, const glm::vec3& sun_world, float strength,
+                 const GraphicsSettings& settings, ShadowCascades& out,
+                 std::array<glm::dmat4, ShadowCascades::max_cascades>& views,
+                 std::array<glm::dmat4, ShadowCascades::max_cascades>& projections)
+{
+    const int count = ShadowCascades::max_cascades;
+    const double atlas = std::max(settings.shadow_size, 64);
+    const double quadrant = atlas / 2;
+    const glm::dmat4 model_view(eye.model_view);
+    const glm::dmat4 eye_to_world = glm::inverse(model_view);
+    const double scale = glm::length(glm::dvec3(model_view[0]));
+    const glm::dmat4 projection(eye.projection);
+    // Which way the eye looks along its z axis; avoid assuming handedness.
+    const double forward = (projection * glm::dvec4(0, 0, -1, 1)).w > 0 ? -1.0 : 1.0;
+    const double tan_x = 1.0 / std::abs(projection[0][0]);
+    const double tan_y = 1.0 / std::abs(projection[1][1]);
+    const double k2 = tan_x * tan_x + tan_y * tan_y;
+    const double first = 150.0;
+    const double reach = std::max(static_cast<double>(settings.shadow_distance), first * 4);
+    // Height above the farthest slice that can still hold casters (cliffs, towers).
+    const double headroom = 80000.0;
+
+    const glm::dvec3 sun = glm::normalize(glm::dvec3(sun_world));
+    const glm::dvec3 up = std::abs(sun.z) < 0.9 ? glm::dvec3(0, 0, 1) : glm::dvec3(1, 0, 0);
+    const glm::dmat4 basis = glm::lookAtRH(glm::dvec3(0), -sun, up);
+
+    out.count = count;
+    out.strength = strength;
+    out.atlas_texel = static_cast<float>(1.0 / atlas);
+    out.fade_end = static_cast<float>(reach);
+    out.fade_start = static_cast<float>(reach * 0.8);
+    out.sun_eye = glm::vec3(glm::normalize(glm::dmat3(model_view) * sun));
+    double near_distance = first;
+    for (int cascade = 0; cascade < count; ++cascade) {
+        const double fraction = static_cast<double>(cascade + 1) / count;
+        const double log_split = first * std::pow(reach / first, fraction);
+        const double linear_split = first + (reach - first) * fraction;
+        const double far_distance = 0.8 * log_split + 0.2 * linear_split;
+        const double n = near_distance, f = far_distance;
+        near_distance = far_distance;
+        const double centre_z = std::min(f, (n + f) * 0.5 * (1.0 + k2));
+        const double radius_eye = std::max(std::sqrt((f - centre_z) * (f - centre_z) + f * f * k2),
+                                           std::sqrt((centre_z - n) * (centre_z - n) + n * n * k2));
+        const double radius = radius_eye / scale;
+        const glm::dvec3 centre_world(eye_to_world * glm::dvec4(0, 0, forward * centre_z, 1));
+        auto centre = glm::dvec3(basis * glm::dvec4(centre_world, 1));
+        const double texel = 2.0 * radius / quadrant;
+        centre.x = std::floor(centre.x / texel) * texel;
+        centre.y = std::floor(centre.y / texel) * texel;
+        const glm::dmat4 light =
+            glm::translate(glm::dmat4(1),
+                           -glm::dvec3(centre.x, centre.y, centre.z + radius + headroom)) *
+            basis;
+        const glm::dmat4 ortho =
+            glm::orthoRH_ZO(-radius, radius, -radius, radius, 0.0, 2.0 * radius + headroom);
+        views[cascade] = light;
+        projections[cascade] = ortho;
+        glm::dmat4 to_quadrant(1);
+        to_quadrant[0][0] = to_quadrant[1][1] = 0.25;
+        to_quadrant[3][0] = 0.25 + 0.5 * (cascade % 2);
+        to_quadrant[3][1] = 0.25 + 0.5 * (cascade / 2);
+        out.eye_to_atlas[cascade] = glm::mat4(to_quadrant * ortho * light * eye_to_world);
+        out.texel_world[cascade] = static_cast<float>(texel);
+    }
+}
+} // namespace
+
+std::span<const vsg::ref_ptr<vsg::View>> WorldScene::shadowViews(std::uint64_t frame_number) const
+{
+    if (!sun_shadows || sun_shadows->frame != frame_number) return {};
+    return std::span(sun_shadows->views).first(sun_shadows->active);
+}
 
 WorldScene::WorldScene()
     : root(vsg::Group::create()), game_root(vsg::StateGroup::create()),
@@ -665,11 +838,50 @@ vsg::ref_ptr<vsg::View> WorldScene::createView(render::RenderContext& context, C
                                                std::uint64_t frame_number)
 {
     prepare(context, frame, frame_number);
-    const ScenePass pass{.frame = frame,
-                         .ambient_light = glm::vec4(ambient_light, 0),
-                         .fog_color = glm::vec4(glm::clamp(fog_color, 0.0f, 1.0f), 0),
-                         .fogs = fogs,
-                         .depth_cue = source ? source->depthCue() : DepthCue{}};
+    ScenePass pass{.frame = frame,
+                   .ambient_light = glm::vec4(ambient_light, 0),
+                   .fog_color = glm::vec4(glm::clamp(fog_color, 0.0f, 1.0f), 0),
+                   .fogs = fogs,
+                   .depth_cue = source ? source->depthCue() : DepthCue{}};
+    const auto& graphics = CurrentGraphicsSettings();
+    if (source && frame.sun.w > 0 && SunShadowsEnabled(graphics)) {
+        if (!sun_shadows) sun_shadows = std::make_unique<SunShadows>();
+        auto& shadows = *sun_shadows;
+        if (shadows.layout != context.layout.get()) {
+            shadows = {};
+            shadows.layout = context.layout.get();
+            shadows.casters = render::ShadowCasters::create(root, context);
+            const auto quadrant =
+                static_cast<std::uint32_t>(std::max(graphics.shadow_size, 64) / 2);
+            for (int cascade = 0; cascade < ShadowCascades::max_cascades; ++cascade) {
+                auto projection = render::Projection::create(vsg::dmat4{});
+                auto view_matrix = render::ViewMatrix::create(vsg::dmat4{});
+                auto view = vsg::View::create(vsg::Camera::create(
+                    projection, view_matrix,
+                    vsg::ViewportState::create(static_cast<std::int32_t>(quadrant * (cascade % 2)),
+                                               static_cast<std::int32_t>(quadrant * (cascade / 2)),
+                                               quadrant, quadrant)));
+                view->mask = render::render_mask;
+                view->viewDependentState = render::ShadowViewState::create(view.get(), context);
+                view->addChild(shadows.casters);
+                shadows.views.push_back(view);
+                shadows.projections.push_back(projection);
+                shadows.view_matrices.push_back(view_matrix);
+            }
+        }
+        std::array<glm::dmat4, ShadowCascades::max_cascades> light_views, light_projections;
+        fitCascades(source->drawTransform(), glm::vec3(frame.sun), frame.sun.w * graphics.shadows,
+                    graphics, shadows.cascades, light_views, light_projections);
+        for (int cascade = 0; cascade < shadows.cascades.count; ++cascade) {
+            shadows.projections[cascade]->matrix = render::toVsg(light_projections[cascade]);
+            shadows.view_matrices[cascade]->matrix = render::toVsg(light_views[cascade]);
+        }
+        shadows.active = static_cast<std::size_t>(shadows.cascades.count);
+        shadows.frame = frame_number;
+        // Debug view 3 shows the raw shadow term (flagged by a negative strength).
+        if (graphics.post_debug == 3) shadows.cascades.strength = -1.0f;
+        pass.shadow = &shadows.cascades;
+    }
     return cachedView(context, source, root, pass, std::move(viewport), frame_number);
 }
 vsg::ref_ptr<vsg::View> WorldScene::createMapView(render::RenderContext& context,

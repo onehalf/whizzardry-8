@@ -369,7 +369,16 @@ static void RenderScene(WorldScene* scene, Camera3D* camera, const SceneFrame& f
                                          vsg::ViewportState::create(area.x, area.y, area.w, area.h),
                                          g_renderer->frameNumber());
     if (!picks.empty()) scene->pick(*render_view->camera, picks);
+    for (const auto& shadow_view : scene->shadowViews(g_renderer->frameNumber()))
+        g_renderer->addShadowView(shadow_view);
     g_renderer->addSceneView(render_view);
+}
+
+/* The sky is lit by its own rules; only the world takes sun shadows. */
+static SceneFrame SkyFrame(SceneFrame frame)
+{
+    frame.sun = glm::vec4(0);
+    return frame;
 }
 
 /* The central renderer frame transaction. It owns presentation, every scene
@@ -393,7 +402,7 @@ std::optional<Pick> RenderFrame(const FrameView& view, std::optional<glm::vec2> 
 
     g_compositor.draw(*g_renderer, OverlayLayer::PreWorld);
 
-    RenderScene(view.sky, view.sky_camera, view.frame, &g_viewport);
+    RenderScene(view.sky, view.sky_camera, SkyFrame(view.frame), &g_viewport);
     Pick pick;
     if (pick_position) pick.position = glm::vec3(*pick_position, 1);
     RenderScene(view.world, view.camera, view.frame, &g_viewport,
@@ -444,7 +453,7 @@ bool RenderViewToSurface(SDL_Surface& target, const FrameView& view, const Desig
 {
     if (!g_renderer || !g_renderer->isOpen() || !view.world) return false;
     g_renderer->beginFrame(glm::vec4(view.background, 1));
-    RenderScene(view.sky, view.sky_camera, view.frame, &rect);
+    RenderScene(view.sky, view.sky_camera, SkyFrame(view.frame), &rect);
     RenderScene(view.world, view.camera, view.frame, &rect);
     return ReadFrameInto(target);
 }

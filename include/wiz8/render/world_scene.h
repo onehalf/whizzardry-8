@@ -77,6 +77,9 @@ public:
     vsg::ref_ptr<vsg::View> createMapView(render::RenderContext&, const SceneFrame&,
                                           vsg::ref_ptr<vsg::ViewportState>,
                                           std::uint64_t frame_number);
+    // The sun shadow cascade views the world view of `frame_number` samples.
+    // The renderer draws them into its shadow atlas before the scene.
+    std::span<const vsg::ref_ptr<vsg::View>> shadowViews(std::uint64_t frame_number) const;
     void pick(const vsg::Camera&, std::span<Pick>) const;
     void advanceVisuals(std::chrono::milliseconds now);
 
@@ -90,6 +93,8 @@ public:
 private:
     struct CachedView;
     std::vector<std::unique_ptr<CachedView>> views;
+    struct SunShadows;
+    std::unique_ptr<SunShadows> sun_shadows;
     vsg::ref_ptr<vsg::StateGroup> game_root;
     vsg::ref_ptr<vsg::Group> objects;
     vsg::ref_ptr<vsg::StateGroup> map_root;

@@ -1,19 +1,25 @@
 #include "wiz8/world_view.h"
 
 #include <chrono>
+#include <cmath>
 #include <optional>
+#include <utility>
 
 #include <SDL3/SDL_surface.h>
 
 #include "glm/common.hpp"
 #include "glm/ext/vector_float2.hpp"
+#include "glm/geometric.hpp"
+#include "glm/trigonometric.hpp"
 #include "wiz8/cursor.h"
 #include "wiz8/entities/monster.h"
+#include "wiz8/entities/prop.h"
 #include "wiz8/game.h"
 #include "wiz8/render/camera.h"
 #include "wiz8/render/camera_shake.h"
 #include "wiz8/render/draw_inputs.h"
 #include "wiz8/render/frame.h"
+#include "wiz8/render/graphics_settings.h"
 #include "wiz8/render/quality.h"
 #include "wiz8/render/renderer.h"
 #include "wiz8/render/world_scene.h"
@@ -23,6 +29,37 @@
 #include "wiz8/world/party_camera.h"
 #include "wiz8/world/world.h"
 
+namespace {
+/* The sky world moves the Sun across its arc by day and the Moon by night,
+   parking the other at the orbit's centre. Its axes turn with the world's
+   camera, so the direction from that centre is the world's sun direction.
+   Moonlight casts fainter shadows. */
+glm::vec4 SunDirection(const Game* game)
+{
+    const auto* world = game ? game->level.primary.get() : nullptr;
+    const auto* sky = game ? game->level.sky.get() : nullptr;
+    if (!world || !sky || !world->environment.sky_enabled) return glm::vec4(0);
+    const auto& environment = sky->environment;
+    if (environment.orbit_radius <= 0.0f) return glm::vec4(0);
+    for (const auto& [body, strength] :
+         {std::pair{environment.sun, 1.0f}, std::pair{environment.moon, 0.35f}}) {
+        if (!body) continue;
+        const auto offset = body->GetLocation() - environment.celestial_origin;
+        if (glm::length(offset) < environment.orbit_radius * 0.5f) continue;
+        // The authored arc stays within 40 degrees of the zenith in one
+        // vertical plane; a fixed tilt, like latitude, keeps midday shadows readable.
+        const float tilt = glm::radians(CurrentGraphicsSettings().sun_tilt);
+        auto direction = glm::normalize(offset);
+        direction =
+            glm::vec3(direction.x, direction.y * std::cos(tilt) - direction.z * std::sin(tilt),
+                      direction.y * std::sin(tilt) + direction.z * std::cos(tilt));
+        // Fade out as the body nears the horizon.
+        return glm::vec4(direction, strength * glm::smoothstep(0.05f, 0.3f, direction.y));
+    }
+    return glm::vec4(0);
+}
+} // namespace
+
 SceneFrame GameSceneFrame(const Game* game)
 {
     const auto* world = game ? game->level.primary.get() : nullptr;
@@ -30,7 +67,8 @@ SceneFrame GameSceneFrame(const Game* game)
             .brightness = g_monster_light_scale,
             .texture_reduction = g_resident_texture_policy,
             .time = game ? std::chrono::duration<double>(game->visual_time).count()
-                         : RenderClockSeconds()};
+                         : RenderClockSeconds(),
+            .sun = SunDirection(game)};
 }
 
 namespace {

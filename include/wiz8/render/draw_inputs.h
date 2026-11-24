@@ -68,6 +68,23 @@ struct SceneFrame {
     std::int32_t texture_reduction = 0;
     // Seconds on the render clock; scrolls texture coordinates.
     double time = 0;
+    // Direction towards the sun (or moon) in world space, and how strongly it
+    // casts shadows; zero strength means no sun shadows for the pass.
+    glm::vec4 sun{0};
+};
+
+// Sun shadow cascades for one view, in that view's eye space. The renderer
+// samples a depth atlas with four quadrants, one cascade each.
+struct ShadowCascades {
+    static constexpr int max_cascades = 4;
+    int count = 0;
+    float strength = 0;
+    float atlas_texel = 0;   // 1 / atlas edge
+    float fade_start = 0;    // eye distance where shadows begin to fade out
+    float fade_end = 0;      // eye distance where they are gone
+    glm::vec4 texel_world{0}; // world units per shadow texel, per cascade
+    glm::vec3 sun_eye{0};     // towards the sun, eye space
+    std::array<glm::mat4, max_cascades> eye_to_atlas{};
 };
 
 // The scene-pass inputs of one submission: frame inputs, lighting, fog colour,
@@ -82,4 +99,6 @@ struct ScenePass {
     DepthCue depth_cue;
     // Light and fog groups the submission ignores.
     std::uint32_t exclusion_mask = 0;
+    // Sun shadows the view samples, or null.
+    const ShadowCascades* shadow = nullptr;
 };

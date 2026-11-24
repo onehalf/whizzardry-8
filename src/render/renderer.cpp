@@ -313,6 +313,7 @@ Renderer::Impl::Impl(SDL_Window* platform_window) : platform_window(platform_win
         post = std::make_unique<render::PostProcess>(
             device, window->framebufferSamples(), window->depthFormat(), CurrentGraphicsSettings());
         post->resize(window->extent2D());
+        if (auto shadow_map = post->shadowMap()) context->setShadowMap(shadow_map);
         commands->addChild(post->commands());
     }
     commands->addChild(render_graph);
@@ -573,6 +574,10 @@ void Renderer::addSceneView(vsg::ref_ptr<vsg::View> view)
     if (auto composite = impl->post->addView(std::move(view)))
         impl->frame_root->addChild(composite);
 }
+void Renderer::addShadowView(vsg::ref_ptr<vsg::View> view)
+{
+    if (impl->post) impl->post->addShadowView(std::move(view));
+}
 void Renderer::prepareOverlay(OverlayQuad& quad)
 {
     const auto size = quad.scaledSize();
@@ -720,6 +725,7 @@ try {
     impl->compiler->compile(*viewer);
     viewer->update();
     viewer->recordAndSubmit();
+    if (impl->post) impl->post->frameSubmitted();
     // A single completion boundary handles removed graph nodes, replaced
     // descriptors and streamed UI pixels without parallel retirement queues.
     viewer->deviceWaitIdle();

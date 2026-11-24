@@ -26,6 +26,7 @@
 #include "wiz8/local_code/Configuration.h"
 #include "wiz8/render/draw_inputs.h"
 #include "wiz8/render/draw_shader.h"
+#include "wiz8/render/graphics_settings.h"
 #include "wiz8/render/material.h"
 #include "wiz8/render/material_loader.h"
 #include "wiz8/render/mesh.h"
@@ -181,7 +182,10 @@ void GroundShadow::updateRenderNode(render::RenderContext& context, const SceneF
                 if (draw) draw->draw->indexCount = 0;
     };
     auto* spatial = world ? world->compiledIndex() : nullptr;
-    if (!visible || !g_settings.monster_shadows || !spatial || width <= 0 || depth <= 0) {
+    // Under sun shadows, monsters cast real shadows instead of projected blobs.
+    const bool sun_shadows = frame.sun.w > 0 && SunShadowsEnabled(CurrentGraphicsSettings());
+    if (!visible || !g_settings.monster_shadows || !spatial || width <= 0 || depth <= 0 ||
+        sun_shadows) {
         hide();
         return;
     }

@@ -46,6 +46,8 @@
 #include <vsg/state/ViewportState.h>
 #include <vulkan/vulkan_core.h>
 
+#include "shadow_frag.spv.h"
+#include "shadow_vert.spv.h"
 #include "wiz8/math.h"
 #include "wiz8/render/draw_inputs.h"
 #include "wiz8/render/draw_shader.h"
@@ -67,6 +69,10 @@ namespace {
 constexpr std::size_t light_vectors = 8;
 constexpr std::size_t fog_vectors = 2;
 constexpr std::size_t material_vectors = 6;
+// View header: depth cue, fog colour, counts, then the sun shadow block.
+constexpr std::size_t shadow_base = 3;
+constexpr std::size_t shadow_vectors = 3 + ShadowCascades::max_cascades * 4;
+constexpr std::size_t light_base = shadow_base + shadow_vectors;
 
 std::uint32_t disabledChannels(std::uint32_t shader)
 {
@@ -117,8 +123,9 @@ RenderContext::RenderContext(VkExtent2D extent, int samples)
     constexpr auto fragment = VK_SHADER_STAGE_FRAGMENT_BIT;
     constexpr auto uniform = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     constexpr auto storage = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    view_layout =
-        vsg::DescriptorSetLayout::create(Bindings{{0, storage, 1, vertex | fragment, nullptr}});
+    view_layout = vsg::DescriptorSetLayout::create(
+        Bindings{{0, storage, 1, vertex | fragment, nullptr},
+                 {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fragment, nullptr}});
     // Per-pixel lighting evaluates the material and light rules in the fragment stage.
     instance_layout =
         vsg::DescriptorSetLayout::create(Bindings{{0, uniform, 1, vertex | fragment, nullptr}});
@@ -147,9 +154,25 @@ RenderContext::RenderContext(VkExtent2D extent, int samples)
     const auto light_max = vsg::floatValue::create(graphics.hdr ? graphics.light_max : 1.0f);
     stages[0]->specializationConstants[2] = light_max;
     stages[1]->specializationConstants[2] = light_max;
+    shadow_stages = {vsg::ShaderStage::create(vertex, "main", module(shadow_vert)),
+                     vsg::ShaderStage::create(fragment, "main", module(shadow_frag))};
     auto pixel = vsg::ubvec4Array2D::create(1, 1, vsg::Data::Properties{VK_FORMAT_R8G8B8A8_UNORM});
     pixel->at(0, 0) = vsg::ubvec4(255, 255, 255, 255);
     white = vsg::ImageInfo::create(vsg::Sampler::create(), pixel);
+    // Depth 1 is the far plane of every cascade: nothing is in shadow.
+    auto far = vsg::floatArray2D::create(1, 1, vsg::Data::Properties{VK_FORMAT_R32_SFLOAT});
+    far->at(0, 0) = 1.0f;
+    auto nearest = vsg::Sampler::create();
+    nearest->magFilter = nearest->minFilter = VK_FILTER_NEAREST;
+    shadow_map = vsg::ImageInfo::create(nearest, far);
+}
+
+vsg::ref_ptr<vsg::BindGraphicsPipeline>
+RenderContext::shadowPipeline(const vsg::BindGraphicsPipeline* scene) const
+{
+    const auto found = shadow_pipelines.find(scene);
+    return found == shadow_pipelines.end() ? vsg::ref_ptr<vsg::BindGraphicsPipeline>{}
+                                           : found->second;
 }
 
 vsg::ref_ptr<vsg::BindGraphicsPipeline> RenderContext::pipeline(std::uint32_t shader, FaceCull cull,
@@ -221,6 +244,31 @@ vsg::ref_ptr<vsg::BindGraphicsPipeline> RenderContext::pipeline(std::uint32_t sh
         viewport};
     found =
         vsg::BindGraphicsPipeline::create(vsg::GraphicsPipeline::create(layout, stages, states));
+    // Opaque and alpha-tested geometry that writes depth casts sun shadows.
+    // The shadow pass draws both faces (single-sided walls still block the
+    // sun) and pushes depth away from the light against acne.
+    const bool opaque = !blend.blendEnable || (shader & DrawShader::MASK_ALPHATEST);
+    if (target == Target::Scene && opaque && depth->depthWriteEnable && blend.colorWriteMask != 0 &&
+        polygon_offset == 0) {
+        auto shadow_raster = vsg::RasterizationState::create();
+        shadow_raster->cullMode = VK_CULL_MODE_NONE;
+        shadow_raster->depthBiasEnable = VK_TRUE;
+        shadow_raster->depthBiasConstantFactor = 2.0f;
+        shadow_raster->depthBiasSlopeFactor = 2.5f;
+        auto shadow_depth = vsg::DepthStencilState::create();
+        shadow_depth->depthTestEnable = shadow_depth->depthWriteEnable = VK_TRUE;
+        shadow_depth->depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        vsg::GraphicsPipelineStates shadow_states{
+            vsg::VertexInputState::create(bindings, attributes),
+            vsg::InputAssemblyState::create(),
+            shadow_raster,
+            vsg::MultisampleState::create(),
+            vsg::ColorBlendState::create(vsg::ColorBlendState::ColorBlendAttachments{}),
+            shadow_depth,
+            viewport};
+        shadow_pipelines[found.get()] = vsg::BindGraphicsPipeline::create(
+            vsg::GraphicsPipeline::create(layout, shadow_stages, shadow_states));
+    }
     return found;
 }
 
@@ -237,10 +285,11 @@ vsg::ref_ptr<vsg::BindDescriptorSet> RenderContext::descriptor(std::uint32_t set
                                               : pass_layout;
     const auto type =
         set == 1 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    vsg::Descriptors descriptors{vsg::DescriptorBuffer::create(data, 0, 0, type)};
+    if (set == 0) descriptors.push_back(vsg::DescriptorImage::create(shadow_map, 1));
     return vsg::BindDescriptorSet::create(
         VK_PIPELINE_BIND_POINT_GRAPHICS, layout, set,
-        vsg::DescriptorSet::create(
-            descriptor_layout, vsg::Descriptors{vsg::DescriptorBuffer::create(data, 0, 0, type)}));
+        vsg::DescriptorSet::create(descriptor_layout, std::move(descriptors)));
 }
 
 vsg::ref_ptr<vsg::BindDescriptorSet>
@@ -268,7 +317,7 @@ RenderContext::batchSet(std::uint32_t shader, vsg::ref_ptr<vsg::ImageInfo> image
 std::vector<glm::vec4> packView(const ScenePass& pass, std::span<const glm::vec4> eye_clip_planes,
                                 std::span<const PreparedLight> lights)
 {
-    const auto fog_base = 3 + lights.size() * light_vectors;
+    const auto fog_base = light_base + lights.size() * light_vectors;
     const auto clip_base = fog_base + pass.fogs.size() * fog_vectors;
     std::vector<glm::vec4> result(clip_base + eye_clip_planes.size());
     result[0] = {pass.depth_cue.minimum, pass.depth_cue.maximum, pass.depth_cue.near_scale,
@@ -277,7 +326,17 @@ std::vector<glm::vec4> packView(const ScenePass& pass, std::span<const glm::vec4
     result[2] = {static_cast<float>(lights.size()), static_cast<float>(pass.fogs.size()),
                  static_cast<float>(eye_clip_planes.size()), static_cast<float>(fog_base)};
     for (std::size_t light = 0; light < lights.size(); ++light)
-        std::ranges::copy(lights[light], result.begin() + 3 + light * light_vectors);
+        std::ranges::copy(lights[light], result.begin() + light_base + light * light_vectors);
+    if (const auto* shadow = pass.shadow; shadow && shadow->count > 0) {
+        result[shadow_base] = {static_cast<float>(shadow->count), shadow->strength,
+                               shadow->atlas_texel, shadow->fade_end};
+        result[shadow_base + 1] = shadow->texel_world;
+        result[shadow_base + 2] = glm::vec4(shadow->sun_eye, shadow->fade_start);
+        for (int cascade = 0; cascade < shadow->count; ++cascade)
+            for (int column = 0; column < 4; ++column)
+                result[shadow_base + 3 + cascade * 4 + column] =
+                    shadow->eye_to_atlas[cascade][column];
+    }
     for (std::size_t layer = 0; layer < pass.fogs.size(); ++layer) {
         const auto& fog = *pass.fogs[layer];
         const float normalization = fog.fog_end == fog.fog_start

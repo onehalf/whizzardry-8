@@ -46,6 +46,7 @@ set(VSG_SHADER_HEADERS)
 set(VSG_SHADER_VARIANTS
     "world_vert|world.vert|" "world_frag|world.frag|"
     "world_ppl_vert|world.vert|-DWZ_PER_PIXEL" "world_ppl_frag|world.frag|-DWZ_PER_PIXEL"
+    "shadow_vert|shadow.vert|" "shadow_frag|shadow.frag|"
     "overlay_vert|overlay.vert|" "overlay_frag|overlay.frag|"
     "post_ssao_comp|post_ssao.comp|" "post_ssao_ms_comp|post_ssao.comp|-DWZ_DEPTH_MS"
     "post_blur_comp|post_blur.comp|" "post_blur_ms_comp|post_blur.comp|-DWZ_DEPTH_MS"

@@ -195,7 +195,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "LP_NUM_THREADS=1")
     # Every enhancement stays on, but software rendering 8x multisampled HDR
     # targets on one thread pushes long scenarios past their wall-clock limits.
-    list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "WIZ8_GFX=msaa=2")
+    list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "WIZ8_GFX=msaa=2,shadow_size=1024")
 endif()
 add_test(NAME native_gpu_rendering COMMAND native_gpu_rendering_test)
 set_tests_properties(native_gpu_rendering PROPERTIES

@@ -8,6 +8,7 @@
 #include <vsg/app/View.h>
 #include <vsg/core/ref_ptr.h>
 #include <vsg/nodes/Group.h>
+#include <vsg/state/ImageInfo.h>
 #include <vsg/vk/Device.h>
 
 struct GraphicsSettings;
@@ -38,6 +39,12 @@ public:
     // Adds a scene view. The first view of a frame returns the composite view
     // the caller places in the window pass; later views return null.
     vsg::ref_ptr<vsg::View> addView(vsg::ref_ptr<vsg::View> view);
+    // Called once a frame's commands have been submitted.
+    void frameSubmitted();
+    // Adds a sun shadow cascade view for this frame.
+    void addShadowView(vsg::ref_ptr<vsg::View> view);
+    // The sampled shadow atlas, or null when sun shadows are off.
+    vsg::ref_ptr<vsg::ImageInfo> shadowMap() const { return shadow_info_; }
 
 private:
     struct Targets;
@@ -50,6 +57,11 @@ private:
     vsg::ref_ptr<vsg::Group> root_ = vsg::Group::create();
     std::unique_ptr<Targets> targets_;
     std::vector<vsg::ref_ptr<vsg::View>> views_;
+    std::vector<vsg::ref_ptr<vsg::View>> shadow_views_;
+    vsg::ref_ptr<vsg::RenderGraph> shadow_graph_;
+    vsg::ref_ptr<vsg::ImageInfo> shadow_info_;
+    bool shadow_ready_ = false;
+    bool shadow_recorded_ = false;
     bool ambient_occlusion_ = false;
 };
 

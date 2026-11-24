@@ -39,6 +39,8 @@ public:
     // Adds a sky or world view: through the HDR post-processing pipeline when
     // it is enabled, otherwise straight into the window pass like addView.
     void addSceneView(vsg::ref_ptr<vsg::View> view);
+    // A sun shadow cascade view, drawn into the shadow atlas before the scene.
+    void addShadowView(vsg::ref_ptr<vsg::View> view);
     void prepareOverlay(OverlayQuad& quad);
     void addOverlay(vsg::ref_ptr<vsg::Node> node);
     void drawOverlayQuad(OverlayQuad& quad);
