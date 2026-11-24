@@ -71,6 +71,10 @@ struct SceneFrame {
     // Direction towards the sun (or moon) in world space, and how strongly it
     // casts shadows; zero strength means no sun shadows for the pass.
     glm::vec4 sun{0};
+    // Lets lit colours exceed 1 on the HDR scene target. The sky's gradients
+    // and sun flare are painted for retail's clamp: past it, the flare's faint
+    // edges show as a bright rectangle.
+    bool hdr_light = true;
 };
 
 // Sun shadow cascades for one view, in that view's eye space. The renderer

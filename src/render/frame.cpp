@@ -377,10 +377,11 @@ static void RenderScene(WorldScene* scene, Camera3D* camera, const SceneFrame& f
     g_renderer->addSceneView(render_view);
 }
 
-/* The sky is lit by its own rules; only the world takes sun shadows. */
+/* The sky is lit by its own rules: only the world takes sun shadows and HDR light. */
 static SceneFrame SkyFrame(SceneFrame frame)
 {
     frame.sun = glm::vec4(0);
+    frame.hdr_light = false;
     return frame;
 }
 

@@ -6,10 +6,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -22,6 +26,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <glm/ext/vector_float3.hpp>
 #include <glm/ext/vector_float4.hpp>
+#include <glm/geometric.hpp>
+#include <glm/trigonometric.hpp>
 #include <vsg/nodes/Group.h>
 #include <vsg/state/ViewportState.h>
 
@@ -39,6 +45,7 @@
 #include "wiz8/entities/trigger.h"
 #include "wiz8/game.h"
 #include "wiz8/item_spawning.h"
+#include "wiz8/layouts/levels.h"
 #include "wiz8/layouts/main_game_screen.h"
 #include "wiz8/live_party.h"
 #include "wiz8/loaded_game_data.h"
@@ -63,9 +70,11 @@
 #include "wiz8/render/compositor.h"
 #include "wiz8/render/draw_inputs.h"
 #include "wiz8/render/frame.h"
+#include "wiz8/render/light.h"
 #include "wiz8/render/material_loader.h"
 #include "wiz8/render/mesh_instance.h"
 #include "wiz8/render/renderer.h"
+#include "wiz8/render/texture.h"
 #include "wiz8/render/vsg_scene.h"
 #include "wiz8/rules/conditions.h"
 #include "wiz8/rules/equipment_slots.h"
@@ -78,6 +87,7 @@
 #include "wiz8/spatial/level_spatial_index.h"
 #include "wiz8/ui_input.h"
 #include "wiz8/world/camera_pose.h"
+#include "wiz8/world/environment.h"
 #include "wiz8/world/level_session.h"
 #include "wiz8/world/world.h"
 #include "wiz8/world_view.h"
@@ -1023,5 +1033,242 @@ TEST_CASE("dungeon-lights", "[runtime]")
         GetWorld()->party.restore(pose);
         Settle(game, "settle");
         ExpectScreen(game, "dungeon-lights");
+    });
+}
+
+/* The sky at game start, looking up past the hills. Level entry shows the
+   current time in the sky before any time passes (the first frame once showed
+   the night gradients), and the sky keeps retail's light clamp (with HDR light
+   the sun flare's faint edges showed as a bright rectangle). */
+TEST_CASE("sky", "[runtime]")
+{
+    RunScenario([] {
+        GameHarness game(false);
+        StartPremadeGame(game);
+        const auto phase = int(((CurrentGame().status.game_time_ms / 1000U) << 8) / 86400U);
+        const auto& sky = CurrentGame().level.sky->environment;
+        for (const auto& gradient : sky.gradients) {
+            const auto animation = gradient.lock();
+            REQUIRE(animation);
+            CHECK(animation->playback->frame == phase);
+        }
+        CameraPose pose = GetWorld()->party.pose();
+        pose.orientation.pitch = -0.45f;
+        GetWorld()->party.restore(pose);
+        Settle(game, "settle");
+        ExpectScreen(game, "sky");
+    });
+}
+
+namespace {
+/* A demo location for screenshots, from WIZ8_SCENE:
+   `level=<id>,entrance=<n>` or `level=<id>,pos=<x>;<y>;<z>`, plus optional
+   `yaw=<deg>`, `pitch=<deg>` (turn from the entrance's view, or the absolute
+   view with pos) and `hour=<0-23>`. */
+struct SceneRequest {
+    int level = 0;
+    int entrance = 0;
+    std::optional<glm::vec3> position;
+    std::optional<float> yaw, pitch;
+    std::optional<int> hour;
+};
+
+SceneRequest ParseScene(std::string_view text)
+{
+    SceneRequest request;
+    for (const auto part : text | std::views::split(',')) {
+        const std::string_view item(part.begin(), part.end());
+        const auto equals = item.find('=');
+        if (equals == std::string_view::npos) continue;
+        const auto key = item.substr(0, equals);
+        const std::string value(item.substr(equals + 1));
+        if (key == "level")
+            request.level = std::stoi(value);
+        else if (key == "entrance")
+            request.entrance = std::stoi(value);
+        else if (key == "yaw")
+            request.yaw = std::stof(value);
+        else if (key == "pitch")
+            request.pitch = std::stof(value);
+        else if (key == "hour")
+            request.hour = std::stoi(value);
+        else if (key == "pos") {
+            glm::vec3 position{};
+            REQUIRE(std::sscanf(value.c_str(), "%f;%f;%f", &position.x, &position.y, &position.z) ==
+                    3);
+            request.position = position;
+        } else
+            FAIL("WIZ8_SCENE: unknown key " << std::string(key));
+    }
+    return request;
+}
+
+/* Let a placed party fall to the ground; unlike Settle, a scene that never
+   comes to rest is still worth a picture. */
+void SettleScene(GameHarness& game)
+{
+    glm::vec3 last = PartyPosition();
+    for (int frame = 0, still = 0; frame < 120 && still < 5; ++frame) {
+        game.frame();
+        const glm::vec3 now = PartyPosition();
+        still = glm::distance(now, last) < 0.01f ? still + 1 : 0;
+        last = now;
+    }
+}
+
+/* Stand at an entrance of the loaded level as level entry does: on the
+   ground under its trigger, facing the way a prop trigger points. A same-level
+   travel would reload the level, which this harness does not need. */
+bool PlaceAtEntrance(int level, int entrance)
+{
+    char name[8];
+    std::snprintf(name, sizeof name, "%3s%02d", g_level_folders[level].location_code, entrance);
+    Trigger* trigger = FindTriggerByName(name);
+    if (!trigger || (trigger->flags & W8_TRIGGER_POSITIONED) == 0) return false;
+    glm::vec3 position;
+    trigger->GetPosition(&position);
+    position.y = probeGround(position).position.y + g_default_world_height;
+    GetWorld()->party.place(position);
+    glm::mat3 rotation(1);
+    if (trigger->trigger_kind == W8TriggerKind::prop && trigger->angle != 0.0f)
+        rotation =
+            glm::mat3_cast(glm::angleAxis(trigger->angle, glm::normalize(trigger->direction)));
+    ApplyCameraRotation(&rotation);
+    return true;
+}
+
+void EnterScene(GameHarness& game, const SceneRequest& request)
+{
+    if (request.hour) CurrentGame().status.game_time_ms = unsigned(*request.hour) * 3600000U;
+    if (GetLoadedLevelID() != request.level)
+        REQUIRE(
+            CurrentGame().travelToLevel(request.level, request.position ? -1 : request.entrance));
+    else if (!request.position)
+        REQUIRE(PlaceAtEntrance(request.level, request.entrance));
+    if (request.hour) InitializeLevelEnvironment();
+    // A picture, not play: standing on a level exit must not ask to leave.
+    for (const auto& trigger : GetWorld()->triggers) trigger->flags &= ~W8_TRIGGER_ENABLED;
+    CameraPose pose = GetWorld()->party.pose();
+    if (request.position) {
+        pose.position = *request.position;
+        pose.orientation = {};
+    }
+    if (request.yaw) pose.orientation.yaw += glm::radians(*request.yaw);
+    if (request.pitch) pose.orientation.pitch = glm::radians(*request.pitch);
+    GetWorld()->party.restore(pose);
+    SettleScene(game);
+}
+
+std::string SceneText(int level, const CameraPose& pose, int hour)
+{
+    char text[160];
+    std::snprintf(text, sizeof text, "level=%d,pos=%.0f;%.0f;%.0f,yaw=%.0f,pitch=%.0f,hour=%d",
+                  level, pose.position.x, pose.position.y, pose.position.z,
+                  glm::degrees(pose.orientation.yaw), glm::degrees(pose.orientation.pitch), hour);
+    return text;
+}
+
+/* Level lights within reach in front of the view. */
+int LightsInView(const CameraPose& pose)
+{
+    const glm::vec3 forward(-std::sin(pose.orientation.yaw), 0, std::cos(pose.orientation.yaw));
+    return int(std::ranges::count_if(GetWorld()->scene->lights, [&](const Light* light) {
+        const auto offset = glm::vec3(light->transform.getLocation()) - pose.position;
+        return glm::length(offset) < 30000 && glm::dot(offset, forward) > 0;
+    }));
+}
+
+/* The scout run: each level's entrances at two headings, its two densest
+   clusters of level lights, and a night view of each outdoor level. Prints one
+   `SCOUT` line per picture with the WIZ8_SCENE string that repeats it. */
+void ScoutLevels(GameHarness& game, std::optional<int> only)
+{
+    int n = 0;
+    const auto shoot = [&](int level, const char* where, int hour) {
+        const auto pose = GetWorld()->party.pose();
+        const auto name = "scout-" + std::to_string(level) + "-" + std::to_string(++n);
+        Snapshot(name.c_str(), game.read_frame());
+        std::printf("SCOUT %d|%s|%s|%s|%s|%d\n", n, name.c_str(), g_level_folders[level].level_name,
+                    where, SceneText(level, pose, hour).c_str(), LightsInView(pose));
+        std::fflush(stdout);
+    };
+    for (int level = 0; level < W8_LEVEL_COUNT; ++level) {
+        const auto& folder = g_level_folders[level];
+        if (folder.level_name[0] == 0 || (only && level != *only)) continue;
+        try {
+            if (GetLoadedLevelID() != level && !CurrentGame().travelToLevel(level, -1)) continue;
+        } catch (const std::exception& error) {
+            std::printf("SCOUT-SKIP %s: %s\n", folder.level_name, error.what());
+            continue;
+        }
+        std::vector<int> entrances;
+        for (int entrance = 0; entrance < 20; ++entrance) {
+            char name[8];
+            std::snprintf(name, sizeof name, "%3s%02d", folder.location_code, entrance);
+            if (Trigger* trigger = FindTriggerByName(name);
+                trigger && (trigger->flags & W8_TRIGGER_POSITIONED) != 0)
+                entrances.push_back(entrance);
+        }
+        const int day = 12;
+        for (int entrance : entrances | std::views::take(3))
+            for (float yaw : {0.0f, 180.0f}) {
+                EnterScene(game, {.level = level, .entrance = entrance, .yaw = yaw, .hour = day});
+                shoot(level,
+                      ("entrance " + std::to_string(entrance) + (yaw == 0 ? "" : ", turned around"))
+                          .c_str(),
+                      day);
+            }
+        // Light clusters: 6000-unit cells with the most level lights.
+        std::map<std::tuple<int, int, int>, std::vector<glm::vec3>> cells;
+        for (const Light* light : GetWorld()->scene->lights) {
+            const auto at = glm::vec3(light->transform.getLocation());
+            cells[{int(std::floor(at.x / 6000)), int(std::floor(at.y / 6000)),
+                   int(std::floor(at.z / 6000))}]
+                .push_back(at);
+        }
+        std::vector<std::vector<glm::vec3>> clusters;
+        for (auto& [cell, lights] : cells) clusters.push_back(lights);
+        std::ranges::sort(clusters, std::greater{}, &std::vector<glm::vec3>::size);
+        for (const auto& lights : clusters | std::views::take(2)) {
+            if (lights.size() < 2) break;
+            glm::vec3 centre(0);
+            for (const auto& at : lights) centre += at / float(lights.size());
+            // Stand back from the cluster's centre and look at it.
+            const glm::vec3 eye = probeGround(centre + glm::vec3(0, 0, -5000)).position +
+                                  glm::vec3(0, g_default_world_height, 0);
+            CameraPose pose{.position = eye};
+            const auto to = centre - eye;
+            pose.orientation.yaw = std::atan2(-to.x, to.z);
+            pose.orientation.pitch = 0;
+            EnterScene(game, {.level = level,
+                              .position = pose.position,
+                              .yaw = glm::degrees(pose.orientation.yaw),
+                              .hour = day});
+            shoot(level, ("light cluster (" + std::to_string(lights.size()) + " lights)").c_str(),
+                  day);
+        }
+        if (folder.sky_index != -1 && !entrances.empty()) {
+            EnterScene(game, {.level = level, .entrance = entrances.front(), .hour = 0});
+            shoot(level, ("entrance " + std::to_string(entrances.front()) + ", night").c_str(), 0);
+        }
+    }
+}
+} // namespace
+
+/* Screenshot scene, not a ctest test: see SceneRequest and ScoutLevels
+   (WIZ8_SCENE=scout, or scout=<level> for one level). */
+TEST_CASE("scene", "[.runtime]")
+{
+    RunScenario([] {
+        GameHarness game(false);
+        StartPremadeGame(game);
+        const char* scene = SDL_getenv("WIZ8_SCENE");
+        REQUIRE(scene);
+        const std::string_view text(scene);
+        if (text == "scout") return ScoutLevels(game, std::nullopt);
+        if (text.starts_with("scout="))
+            return ScoutLevels(game, std::stoi(std::string(text.substr(6))));
+        EnterScene(game, ParseScene(scene));
+        Snapshot("scene", game.read_frame());
     });
 }

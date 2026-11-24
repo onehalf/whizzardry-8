@@ -70,12 +70,9 @@ static void RefreshCloudMaterial(World& world)
     material.dirty = 1;
 }
 
-/* Advance the authoritative game clock and place the two celestial props on
-   opposite sides of the world's recovered sky origin: the day's prop sits one
-   orbit radius away in the rotated direction, the other rests on the origin.
-   The three animated sky gradients consume the same 8-bit day phase, so the
-   clock, prop placement, and gradient animation remain one update rather than
-   parallel timers. */
+static void PlaceSky(World& sky_world);
+
+/* Advance the authoritative game clock, then show the new time in the sky. */
 void AdvanceEnvironmentTime(int elapsed)
 {
     unsigned int time = CurrentGame().status.game_time_ms + elapsed;
@@ -91,10 +88,18 @@ void AdvanceEnvironmentTime(int elapsed)
         UpdateGameClock(elapsed);
     }
     if (GetWorld()) GetWorld()->environment.untaken_time = {};
+    if (GetSecondaryWorld()) PlaceSky(*GetSecondaryWorld());
+}
 
-    if (!GetSecondaryWorld()) return;
-    auto& sky = GetSecondaryWorld()->environment;
-    RefreshCloudMaterial(*GetSecondaryWorld());
+/* Show the game clock in the sky: place the two celestial props on opposite
+   sides of the world's recovered sky origin (the day's prop sits one orbit
+   radius away in the rotated direction, the other rests on the origin), and
+   set the cloud brightness and the three sky gradients from the same 8-bit day
+   phase, so they never disagree. */
+static void PlaceSky(World& sky_world)
+{
+    auto& sky = sky_world.environment;
+    RefreshCloudMaterial(sky_world);
     const double arc = 3.141592653589793 * (1.0f / 180.0f) * 80.0;
     bool day;
     double angle;
@@ -640,6 +645,9 @@ void InitializeLevelEnvironment(void)
         }
     }
     AdvanceEnvironmentClock();
+    // The sky shows the current time from the first frame, even when no time
+    // passes before it (otherwise the gradients show phase 0, a night sky).
+    if (GetSecondaryWorld()) PlaceSky(*GetSecondaryWorld());
     unsigned int phase = ((CurrentGame().status.game_time_ms / 1000U) << 8) / 86400U;
     SetWorldEnvironmentColour(GetWorld()->environment.colours[phase]);
     GetWorld()->environment.light_direction = GetWorld()->environment.light_colours[phase];

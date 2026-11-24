@@ -69,8 +69,8 @@ namespace {
 constexpr std::size_t light_vectors = 8;
 constexpr std::size_t fog_vectors = 2;
 constexpr std::size_t material_vectors = 6;
-// View header: depth cue, fog colour, counts, then the sun shadow block.
-constexpr std::size_t shadow_base = 3;
+// View header: depth cue, fog colour, counts, light ceiling, then the sun shadow block.
+constexpr std::size_t shadow_base = 4;
 constexpr std::size_t shadow_vectors = 3 + ShadowCascades::max_cascades * 4;
 // Torch shadows: header, eye-to-world rotation, then per light its position,
 // colour and six face matrices.
@@ -80,7 +80,7 @@ constexpr std::size_t light_shadow_vectors =
     4 + LightShadows::max_lights * light_shadow_vectors_each;
 constexpr std::size_t light_base = light_shadow_base + light_shadow_vectors;
 // world_blocks.glsl repeats these.
-static_assert(light_shadow_base == 22 && light_shadow_vectors_each == 26 && light_base == 130);
+static_assert(light_shadow_base == 23 && light_shadow_vectors_each == 26 && light_base == 131);
 
 std::uint32_t disabledChannels(std::uint32_t shader)
 {
@@ -160,9 +160,6 @@ RenderContext::RenderContext(VkExtent2D extent, int samples)
     stages[1]->specializationConstants[0] =
         vsg::uintValue::create(graphics.alpha_to_coverage && samples > 1 ? 1u : 0u);
     stages[1]->specializationConstants[1] = vsg::intValue::create(samples);
-    const auto light_max = vsg::floatValue::create(graphics.hdr ? graphics.light_max : 1.0f);
-    stages[0]->specializationConstants[2] = light_max;
-    stages[1]->specializationConstants[2] = light_max;
     shadow_stages = {vsg::ShaderStage::create(vertex, "main", module(shadow_vert)),
                      vsg::ShaderStage::create(fragment, "main", module(shadow_frag))};
     auto pixel = vsg::ubvec4Array2D::create(1, 1, vsg::Data::Properties{VK_FORMAT_R8G8B8A8_UNORM});
@@ -338,6 +335,8 @@ std::vector<glm::vec4> packView(const ScenePass& pass, std::span<const glm::vec4
     result[1] = pass.fog_color;
     result[2] = {static_cast<float>(lights.size()), static_cast<float>(pass.fogs.size()),
                  static_cast<float>(eye_clip_planes.size()), static_cast<float>(fog_base)};
+    const auto& graphics = CurrentGraphicsSettings();
+    result[3].x = graphics.hdr && pass.frame.hdr_light ? graphics.light_max : 1.0f;
     for (std::size_t light = 0; light < lights.size(); ++light)
         std::ranges::copy(lights[light], result.begin() + light_base + light * light_vectors);
     if (const auto* shadow = pass.shadow; shadow && shadow->count > 0) {

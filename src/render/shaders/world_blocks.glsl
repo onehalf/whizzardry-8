@@ -9,19 +9,19 @@ layout(std140, set = 3, binding = 0) uniform Batch {
     vec4 alpha_test;
 } batch;
 
-#define WZ_SHADOW_BASE 3
-#define WZ_LIGHT_SHADOW_BASE 22
+#define WZ_SHADOW_BASE 4
+#define WZ_LIGHT_SHADOW_BASE 23
 #define WZ_LIGHT_SHADOW_VEC4S 26
-#define WZ_LIGHT_BASE 130
+#define WZ_LIGHT_BASE 131
 #define WZ_LIGHT_VEC4S 8
 #define WZ_FOG_BASE int(view.values[2].w)
 #define WZ_MATERIAL_BASE (WZ_FOG_BASE + int(view.values[2].y))
 #define WZ_MATERIAL_VEC4S 6
 
-// Retail clamps lit colours to 1. The HDR scene target keeps light up to this
-// ceiling so highlights, overlapping lights and additive effects can bloom.
-layout(constant_id = 2) const float wz_light_max = 1.0;
+// Retail clamps lit colours to 1. The HDR scene target keeps light up to the
+// view's ceiling so highlights, overlapping lights and additive effects can
+// bloom; the sky keeps retail's clamp.
 vec4 wzClampLight(vec4 color)
 {
-    return vec4(clamp(color.rgb, 0.0, wz_light_max), clamp(color.a, 0.0, 1.0));
+    return vec4(clamp(color.rgb, 0.0, view.values[3].x), clamp(color.a, 0.0, 1.0));
 }

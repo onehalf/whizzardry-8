@@ -271,7 +271,7 @@ set(WIZ8_RUNTIME_TEST_ENVIRONMENT ${WIZ8_GRAPHICS_TEST_ENVIRONMENT} "SDL_AUDIO_D
     "WIZ8_RUNTIME_SAVE_FIXTURE=${WIZ8_RUNTIME_SAVE_FIXTURE}"
     "WIZ8_RUNTIME_DOWNLOADS=${WIZ8_DOWNLOAD_CACHE}"
     "WIZ8_NATIVE_EXAMPLES=${PROJECT_SOURCE_DIR}/examples/native")
-foreach(scenario video video-seen main-menu-ui formation-ui game-start resource-lifecycle inventory-chest camp-spells dungeon-lights quick-save combat npc-dialogue load-game retail-save import-vitalia import-no-vitalia import-umpani import-trang random-play menu-save)
+foreach(scenario video video-seen main-menu-ui formation-ui game-start resource-lifecycle inventory-chest camp-spells dungeon-lights sky quick-save combat npc-dialogue load-game retail-save import-vitalia import-no-vitalia import-umpani import-trang random-play menu-save)
     # A fixed seed makes the game's random rolls repeatable.
     add_test(NAME runtime_${scenario} COMMAND native_runtime_test ${scenario} --rng-seed 1)
     set_tests_properties(runtime_${scenario} PROPERTIES
