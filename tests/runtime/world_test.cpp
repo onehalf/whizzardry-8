@@ -1084,10 +1084,12 @@ namespace {
 /* A demo location for screenshots, from WIZ8_SCENE:
    `level=<id>,entrance=<n>` or `level=<id>,pos=<x>;<y>;<z>`, plus optional
    `yaw=<deg>`, `pitch=<deg>` (turn from the entrance's view, or the absolute
-   view with pos) and `hour=<0-23>`. */
+   view with pos) and `hour=<0-23>`. Without pos or entrance, the level's
+   lowest entrance: not every level has entrance 0 (Marten1, Swamp), and level
+   entry puts the party for a missing one at the origin, outside the map. */
 struct SceneRequest {
     int level = 0;
-    int entrance = 0;
+    std::optional<int> entrance;
     std::optional<glm::vec3> position;
     std::optional<float> yaw, pitch;
     std::optional<int> hour;
@@ -1136,15 +1138,31 @@ void SettleScene(GameHarness& game)
     }
 }
 
+/* The loaded level's positioned trigger for an entrance number, if any. */
+Trigger* EntranceTrigger(int level, int entrance)
+{
+    char name[8];
+    std::snprintf(name, sizeof name, "%3s%02d", g_level_folders[level].location_code, entrance);
+    Trigger* trigger = FindTriggerByName(name);
+    return trigger && (trigger->flags & W8_TRIGGER_POSITIONED) != 0 ? trigger : nullptr;
+}
+
+/* The loaded level's entrance numbers, lowest first. */
+std::vector<int> LevelEntrances(int level)
+{
+    std::vector<int> entrances;
+    for (int entrance = 0; entrance < 20; ++entrance)
+        if (EntranceTrigger(level, entrance)) entrances.push_back(entrance);
+    return entrances;
+}
+
 /* Stand at an entrance of the loaded level as level entry does: on the
    ground under its trigger, facing the way a prop trigger points. A same-level
    travel would reload the level, which this harness does not need. */
 bool PlaceAtEntrance(int level, int entrance)
 {
-    char name[8];
-    std::snprintf(name, sizeof name, "%3s%02d", g_level_folders[level].location_code, entrance);
-    Trigger* trigger = FindTriggerByName(name);
-    if (!trigger || (trigger->flags & W8_TRIGGER_POSITIONED) == 0) return false;
+    Trigger* trigger = EntranceTrigger(level, entrance);
+    if (!trigger) return false;
     glm::vec3 position;
     trigger->GetPosition(&position);
     position.y = probeGround(position).position.y + g_default_world_height;
@@ -1161,10 +1179,15 @@ void EnterScene(GameHarness& game, const SceneRequest& request)
 {
     if (request.hour) CurrentGame().status.game_time_ms = unsigned(*request.hour) * 3600000U;
     if (GetLoadedLevelID() != request.level)
-        REQUIRE(
-            CurrentGame().travelToLevel(request.level, request.position ? -1 : request.entrance));
-    else if (!request.position)
-        REQUIRE(PlaceAtEntrance(request.level, request.entrance));
+        REQUIRE(CurrentGame().travelToLevel(request.level,
+                                            request.position ? -1 : request.entrance.value_or(-1)));
+    if (!request.position) {
+        const auto entrances = LevelEntrances(request.level);
+        REQUIRE_FALSE(entrances.empty());
+        const int entrance = request.entrance.value_or(entrances.front());
+        INFO("WIZ8_SCENE: level " << request.level << " has no entrance " << entrance);
+        REQUIRE(PlaceAtEntrance(request.level, entrance));
+    }
     if (request.hour) InitializeLevelEnvironment();
     // A picture, not play: standing on a level exit must not ask to leave.
     for (const auto& trigger : GetWorld()->triggers) trigger->flags &= ~W8_TRIGGER_ENABLED;
@@ -1221,14 +1244,7 @@ void ScoutLevels(GameHarness& game, std::optional<int> only)
             std::printf("SCOUT-SKIP %s: %s\n", folder.level_name, error.what());
             continue;
         }
-        std::vector<int> entrances;
-        for (int entrance = 0; entrance < 20; ++entrance) {
-            char name[8];
-            std::snprintf(name, sizeof name, "%3s%02d", folder.location_code, entrance);
-            if (Trigger* trigger = FindTriggerByName(name);
-                trigger && (trigger->flags & W8_TRIGGER_POSITIONED) != 0)
-                entrances.push_back(entrance);
-        }
+        const auto entrances = LevelEntrances(level);
         const int day = 12;
         for (int entrance : entrances | std::views::take(3))
             for (float yaw : {0.0f, 180.0f}) {
