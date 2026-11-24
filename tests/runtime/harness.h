@@ -167,6 +167,8 @@ public:
     /* Copies a file into the writable user root before the game reads it. */
     void install(const fs::path& source, const fs::path& relative)
     {
+        if (!fs::is_regular_file(source))
+            FailStep("install", "missing input file " + source.string());
         const fs::path target = user_.path / relative;
         fs::create_directories(target.parent_path());
         fs::copy_file(source, target, fs::copy_options::overwrite_existing);

@@ -522,7 +522,8 @@ std::vector<unsigned> GameHarness::read_frame()
 
 void GameHarness::save_failure_frames()
 {
-    if (failure_frame_ == frames_) return;
+    // Before the first frame there is no picture to save.
+    if (frames_ == 0 || failure_frame_ == frames_) return;
     failure_frame_ = frames_;
     const fs::path directory = ArtifactDirectory();
     if (directory.empty()) return;
