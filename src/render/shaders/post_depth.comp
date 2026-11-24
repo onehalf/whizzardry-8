@@ -1,0 +1,15 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Copies the world viewport's depth (sample 0 of a multisampled target) to a
+// single-sample image. SSAO and its blur read it at scattered pixels, which on
+// a multisampled depth target costs many times more than the copy.
+layout(local_size_x = 8, local_size_y = 8) in;
+#include "post_common.glsl"
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D depth_image;
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy) + post.rect.xy;
+    if (!wzInside(pixel)) return;
+    imageStore(depth_image, pixel, vec4(wzDepth(pixel)));
+}

@@ -13,11 +13,11 @@
 #include "post_bloom_down_comp.spv.h"
 #include "post_bloom_up_comp.spv.h"
 #include "post_blur_comp.spv.h"
-#include "post_blur_ms_comp.spv.h"
 #include "post_composite_frag.spv.h"
 #include "post_composite_vert.spv.h"
+#include "post_depth_comp.spv.h"
+#include "post_depth_ms_comp.spv.h"
 #include "post_ssao_comp.spv.h"
-#include "post_ssao_ms_comp.spv.h"
 #include "wiz8/render/graphics_settings.h"
 #include "wiz8/render/quality.h"
 
@@ -223,10 +223,10 @@ struct ComputePass {
 struct PostProcess::Targets {
     VkExtent2D extent{};
     vsg::ref_ptr<vsg::RenderGraph> scene;
-    vsg::ref_ptr<vsg::Image> color, depth, raw_ao, ao, bloom;
+    vsg::ref_ptr<vsg::Image> color, depth, single_depth, raw_ao, ao, bloom;
     std::vector<VkExtent2D> bloom_sizes;
     vsg::ref_ptr<vsg::PipelineBarrier> prepare;
-    std::unique_ptr<ComputePass> ssao, blur;
+    std::unique_ptr<ComputePass> depth_copy, ssao, blur;
     std::vector<std::unique_ptr<ComputePass>> bloom_down, bloom_up;
     vsg::ref_ptr<vsg::Commands> compute = vsg::Commands::create();
     vsg::ref_ptr<vsg::View> composite;
@@ -367,8 +367,11 @@ void PostProcess::resize(VkExtent2D extent)
 
     // Post targets.
     constexpr auto storage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    targets->single_depth = makeImage(VK_FORMAT_R32_SFLOAT, extent, storage);
     targets->raw_ao = makeImage(kAoFormat, extent, storage);
     targets->ao = makeImage(kAoFormat, extent, storage);
+    auto single_depth_view =
+        vsg::createImageView(device, targets->single_depth, VK_IMAGE_ASPECT_COLOR_BIT);
     auto raw_ao_view = vsg::createImageView(device, targets->raw_ao, VK_IMAGE_ASPECT_COLOR_BIT);
     auto ao_view = vsg::createImageView(device, targets->ao, VK_IMAGE_ASPECT_COLOR_BIT);
     const auto smallest = std::min(extent.width, extent.height);
@@ -387,7 +390,8 @@ void PostProcess::resize(VkExtent2D extent)
 
     targets->prepare = vsg::PipelineBarrier::create(
         VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0,
-        toGeneral(targets->raw_ao), toGeneral(targets->ao), toGeneral(targets->bloom));
+        toGeneral(targets->single_depth), toGeneral(targets->raw_ao), toGeneral(targets->ao),
+        toGeneral(targets->bloom));
 
     const auto nearest = makeSampler(VK_FILTER_NEAREST);
     const auto linear = makeSampler(VK_FILTER_LINEAR);
@@ -420,20 +424,25 @@ void PostProcess::resize(VkExtent2D extent)
             return vsg::BindComputePipeline::create(vsg::ComputePipeline::create(
                 layout, vsg::ShaderStage::create(compute, "main", module(code))));
         };
-        targets->ssao = std::make_unique<ComputePass>(
-            pipeline(ssao_layout, multisampled ? std::span<const std::uint32_t>(post_ssao_ms_comp)
-                                               : std::span<const std::uint32_t>(post_ssao_comp)),
+        targets->depth_copy = std::make_unique<ComputePass>(
+            pipeline(ssao_layout, multisampled ? std::span<const std::uint32_t>(post_depth_ms_comp)
+                                               : std::span<const std::uint32_t>(post_depth_comp)),
             ssao_layout, ssao_set,
+            vsg::Descriptors{vsg::DescriptorImage::create(depth_info, 0, 0, sampled),
+                             vsg::DescriptorImage::create(general(nearest, single_depth_view), 1, 0,
+                                                          storage_image)},
+            pushData(PostParameters{}));
+        const auto single_depth_info = general(nearest, single_depth_view);
+        targets->ssao = std::make_unique<ComputePass>(
+            pipeline(ssao_layout, post_ssao_comp), ssao_layout, ssao_set,
             vsg::Descriptors{
-                vsg::DescriptorImage::create(depth_info, 0, 0, sampled),
+                vsg::DescriptorImage::create(single_depth_info, 0, 0, sampled),
                 vsg::DescriptorImage::create(general(nearest, raw_ao_view), 1, 0, storage_image)},
             pushData(PostParameters{}));
         targets->blur = std::make_unique<ComputePass>(
-            pipeline(blur_layout, multisampled ? std::span<const std::uint32_t>(post_blur_ms_comp)
-                                               : std::span<const std::uint32_t>(post_blur_comp)),
-            blur_layout, blur_set,
+            pipeline(blur_layout, post_blur_comp), blur_layout, blur_set,
             vsg::Descriptors{
-                vsg::DescriptorImage::create(depth_info, 0, 0, sampled),
+                vsg::DescriptorImage::create(single_depth_info, 0, 0, sampled),
                 vsg::DescriptorImage::create(general(nearest, raw_ao_view), 1, 0, storage_image),
                 vsg::DescriptorImage::create(general(nearest, ao_view), 2, 0, storage_image)},
             pushData(PostParameters{}));
@@ -588,6 +597,8 @@ vsg::ref_ptr<vsg::View> PostProcess::addView(vsg::ref_ptr<vsg::View> view)
                                  rect,
                                  {settings_.ssao_radius, settings_.ssao_radius * 0.04f, 1.5f, 0}});
     writePushData(*targets.blur->push, PostParameters{matrix, rect, {}});
+    writePushData(*targets.depth_copy->push, PostParameters{matrix, rect, {}});
+    targets.depth_copy->size(bounds.extent.width, bounds.extent.height);
     targets.ssao->size(bounds.extent.width, bounds.extent.height);
     targets.blur->size(bounds.extent.width, bounds.extent.height);
     writePushData(*targets.composite_push,
@@ -624,6 +635,8 @@ void PostProcess::buildFrameCommands()
     auto& compute = targets.compute;
     compute->children.clear();
     if (ambient_occlusion_) {
+        compute->addChild(targets.depth_copy->commands);
+        compute->addChild(computeToCompute());
         compute->addChild(targets.ssao->commands);
         compute->addChild(computeToCompute());
         compute->addChild(targets.blur->commands);

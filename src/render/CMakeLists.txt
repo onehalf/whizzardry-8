@@ -48,8 +48,8 @@ set(VSG_SHADER_VARIANTS
     "world_ppl_vert|world.vert|-DWZ_PER_PIXEL" "world_ppl_frag|world.frag|-DWZ_PER_PIXEL"
     "shadow_vert|shadow.vert|" "shadow_frag|shadow.frag|"
     "overlay_vert|overlay.vert|" "overlay_frag|overlay.frag|"
-    "post_ssao_comp|post_ssao.comp|" "post_ssao_ms_comp|post_ssao.comp|-DWZ_DEPTH_MS"
-    "post_blur_comp|post_blur.comp|" "post_blur_ms_comp|post_blur.comp|-DWZ_DEPTH_MS"
+    "post_depth_comp|post_depth.comp|" "post_depth_ms_comp|post_depth.comp|-DWZ_DEPTH_MS"
+    "post_ssao_comp|post_ssao.comp|" "post_blur_comp|post_blur.comp|"
     "post_bloom_down_comp|post_bloom_down.comp|" "post_bloom_up_comp|post_bloom_up.comp|"
     "post_composite_vert|post_composite.vert|" "post_composite_frag|post_composite.frag|")
 file(GLOB VSG_SHADER_INCLUDES "${VSG_SHADER_SOURCE_DIR}/*.glsl")
