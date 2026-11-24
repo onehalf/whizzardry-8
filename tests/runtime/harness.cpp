@@ -445,11 +445,13 @@ std::vector<unsigned> PresentedFrame()
         for (unsigned& pixel : pixels) pixel &= 0xffffff;
         return pixels;
     }
-    // The swapchain matches the window's pixel size; sample it in screen coordinates.
+    // The swapchain matches the window's pixel size; sample it in screen coordinates,
+    // at the centre of each screen pixel's block: a filtered upscale blends block edges.
     for (int y = 0; y < SCREEN_HEIGHT; ++y)
         for (int x = 0; x < SCREEN_WIDTH; ++x)
             pixels[y * SCREEN_WIDTH + x] =
-                ReadARGB(*surface, x * surface->w / SCREEN_WIDTH, y * surface->h / SCREEN_HEIGHT) &
+                ReadARGB(*surface, (2 * x + 1) * surface->w / (2 * SCREEN_WIDTH),
+                         (2 * y + 1) * surface->h / (2 * SCREEN_HEIGHT)) &
                 0xffffff;
     return pixels;
 }
@@ -498,8 +500,11 @@ UiCoverage PresentedUi(SDL_Surface& ui, SDL_Rect area)
                 !SDL_ReadSurfacePixel(&ui, x, y, &r, &g, &b, &a) || !a)
                 continue;
             const unsigned pixel = presented[y * SCREEN_WIDTH + x];
-            const auto near = [](int painted, unsigned shown) {
-                return std::abs(painted - int(shown & 255)) <= 2;
+            // An enlarged window (WIZ8_RUNTIME_WINDOW) shows the UI through a filtered
+            // upscale, which blends each pixel with its neighbours.
+            const int tolerance = SDL_getenv("WIZ8_RUNTIME_WINDOW") ? 40 : 2;
+            const auto near = [tolerance](int painted, unsigned shown) {
+                return std::abs(painted - int(shown & 255)) <= tolerance;
             };
             ++coverage.painted;
             coverage.shown += near(r, pixel >> 16) && near(g, pixel >> 8) && near(b, pixel);
