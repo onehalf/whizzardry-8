@@ -51,6 +51,7 @@
 #include <vsg/vk/Context.h>
 #include <vulkan/vulkan_core.h>
 
+#include "SDL3/SDL_stdinc.h"
 #include "glm/common.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/ext/matrix_double4x4.hpp"
@@ -636,6 +637,18 @@ struct WorldScene::SunShadows {
     std::size_t active = 0;
 };
 
+// Cube shadow maps for the nearest level lights: one atlas row of six faces each.
+struct WorldScene::LightShadowMaps {
+    LightShadows shadows;
+    std::vector<vsg::ref_ptr<vsg::View>> views;
+    std::vector<vsg::ref_ptr<render::Projection>> projections;
+    std::vector<vsg::ref_ptr<render::ViewMatrix>> view_matrices;
+    vsg::ref_ptr<vsg::Node> casters;
+    const void* layout = nullptr;
+    std::uint64_t frame = ~std::uint64_t{0};
+    std::size_t active = 0;
+};
+
 namespace {
 /* Fits the cascades to the eye's view frustum. Each cascade is a sphere
    around a slice of the frustum, so its size does not change as the view
@@ -706,12 +719,100 @@ void fitCascades(const DrawTransform& eye, const glm::vec3& sun_world, float str
         out.texel_world[cascade] = static_cast<float>(texel);
     }
 }
+
+/* Chooses the level lights whose baked glow is nearest the eye and fits a cube
+   of shadow views around each. Faces widen past 90 degrees by a few texels so
+   the shadow filter never reads a neighbouring face. A light fades out over the
+   last part of its reach so it does not pop when another one takes its slot. */
+void fitLightShadows(const DrawTransform& eye, std::span<Light* const> lights,
+                     const GraphicsSettings& settings, LightShadows& out,
+                     std::span<glm::dmat4> views, std::span<glm::dmat4> projections)
+{
+    const glm::dmat4 model_view(eye.model_view);
+    const glm::dmat4 eye_to_world = glm::inverse(model_view);
+    const double scale = glm::length(glm::dvec3(model_view[0]));
+    const glm::dvec3 eye_world(eye_to_world[3]);
+    // How far past a light's reach the eye can be and still see its shadows.
+    constexpr double reach = 6000.0;
+    struct Candidate {
+        const Light* light;
+        glm::dvec3 position;
+        double range;
+        double score;
+    };
+    std::vector<Candidate> candidates;
+    for (const auto* light : lights) {
+        if (!light->visible || !light->bake_into_mesh || light->intensity <= 0 ||
+            light->diffuse == glm::vec3(0) ||
+            SDL_strncasecmp(light->getName().c_str(), "Sun", 3) == 0)
+            continue;
+        const double range = light->bakedRange();
+        if (!(range > 0)) continue;
+        const glm::dvec3 position(light->worldMatrix()[3]);
+        const double score = glm::distance(position, eye_world) - range;
+        if (score < reach) candidates.push_back({light, position, range, score});
+    }
+    const auto count =
+        std::min({candidates.size(), static_cast<std::size_t>(settings.shadow_lights),
+                  static_cast<std::size_t>(LightShadows::max_lights)});
+    std::ranges::partial_sort(candidates, candidates.begin() + static_cast<std::ptrdiff_t>(count),
+                              {}, &Candidate::score);
+
+    const double face = std::max(settings.light_shadow_size, 16);
+    constexpr double margin = 3.0; // texels on each side
+    const double tangent = face / (face - 2 * margin);
+    constexpr double near_plane = 20.0;
+    static constexpr std::array<glm::dvec3, LightShadows::faces> axes{
+        glm::dvec3(1, 0, 0),  glm::dvec3(-1, 0, 0), glm::dvec3(0, 1, 0),
+        glm::dvec3(0, -1, 0), glm::dvec3(0, 0, 1),  glm::dvec3(0, 0, -1)};
+    out.count = static_cast<int>(count);
+    out.strength = settings.light_shadows;
+    out.atlas_texel = {1.0 / (face * LightShadows::faces), 1.0 / (face * settings.shadow_lights)};
+    out.eye_to_world = glm::mat3(glm::dmat3(eye_to_world));
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& candidate = candidates[index];
+        auto& shadowed = out.lights[index];
+        const auto* light = candidate.light;
+        const double fade =
+            1.0 - glm::smoothstep(reach * 0.5, reach, std::max(candidate.score, 0.0));
+        shadowed.eye_position = glm::vec3(model_view * glm::dvec4(candidate.position, 1));
+        shadowed.range = static_cast<float>(candidate.range * scale);
+        shadowed.color = light->diffuse * light->intensity * static_cast<float>(fade);
+        shadowed.texel_tangent = static_cast<float>(2.0 * tangent / face);
+        const glm::dmat4 projection = glm::perspectiveRH_ZO(
+            2.0 * std::atan(tangent), 1.0, near_plane, candidate.range + near_plane);
+        for (int side = 0; side < LightShadows::faces; ++side) {
+            const glm::dvec3 axis = axes[side];
+            const glm::dvec3 up =
+                std::abs(axis.y) > 0.5 ? glm::dvec3(0, 0, 1) : glm::dvec3(0, 1, 0);
+            const glm::dmat4 view =
+                glm::lookAtRH(candidate.position, candidate.position + axis, up);
+            const auto slot = index * LightShadows::faces + static_cast<std::size_t>(side);
+            views[slot] = view;
+            projections[slot] = projection;
+            // Clip space to this face's tile of the atlas.
+            glm::dmat4 to_tile(1);
+            to_tile[0][0] = 0.5 / LightShadows::faces;
+            to_tile[1][1] = 0.5 / settings.shadow_lights;
+            to_tile[3][0] = (side + 0.5) / LightShadows::faces;
+            to_tile[3][1] = (static_cast<double>(index) + 0.5) / settings.shadow_lights;
+            shadowed.eye_to_atlas[side] = glm::mat4(to_tile * projection * view * eye_to_world);
+        }
+    }
+}
 } // namespace
 
 std::span<const vsg::ref_ptr<vsg::View>> WorldScene::shadowViews(std::uint64_t frame_number) const
 {
     if (!sun_shadows || sun_shadows->frame != frame_number) return {};
     return std::span(sun_shadows->views).first(sun_shadows->active);
+}
+
+std::span<const vsg::ref_ptr<vsg::View>>
+WorldScene::lightShadowViews(std::uint64_t frame_number) const
+{
+    if (!light_shadows || light_shadows->frame != frame_number) return {};
+    return std::span(light_shadows->views).first(light_shadows->active);
 }
 
 WorldScene::WorldScene()
@@ -881,6 +982,46 @@ vsg::ref_ptr<vsg::View> WorldScene::createView(render::RenderContext& context, C
         // Debug view 3 shows the raw shadow term (flagged by a negative strength).
         if (graphics.post_debug == 3) shadows.cascades.strength = -1.0f;
         pass.shadow = &shadows.cascades;
+    }
+    if (source && LightShadowsEnabled(graphics)) {
+        if (!light_shadows) light_shadows = std::make_unique<LightShadowMaps>();
+        auto& maps = *light_shadows;
+        if (maps.layout != context.layout.get()) {
+            maps = {};
+            maps.layout = context.layout.get();
+            maps.casters = render::ShadowCasters::create(root, context);
+            const auto face = static_cast<std::uint32_t>(std::max(graphics.light_shadow_size, 16));
+            for (int light = 0; light < graphics.shadow_lights; ++light) {
+                for (int side = 0; side < LightShadows::faces; ++side) {
+                    auto projection = render::Projection::create(vsg::dmat4{});
+                    auto view_matrix = render::ViewMatrix::create(vsg::dmat4{});
+                    auto view = vsg::View::create(vsg::Camera::create(
+                        projection, view_matrix,
+                        vsg::ViewportState::create(static_cast<std::int32_t>(face * side),
+                                                   static_cast<std::int32_t>(face * light), face,
+                                                   face)));
+                    view->mask = render::render_mask;
+                    view->viewDependentState = render::ShadowViewState::create(view.get(), context);
+                    view->addChild(maps.casters);
+                    maps.views.push_back(view);
+                    maps.projections.push_back(projection);
+                    maps.view_matrices.push_back(view_matrix);
+                }
+            }
+        }
+        std::vector<glm::dmat4> light_views(maps.views.size()),
+            light_projections(maps.views.size());
+        fitLightShadows(source->drawTransform(), lights, graphics, maps.shadows, light_views,
+                        light_projections);
+        maps.active = static_cast<std::size_t>(maps.shadows.count * LightShadows::faces);
+        for (std::size_t slot = 0; slot < maps.active; ++slot) {
+            maps.projections[slot]->matrix = render::toVsg(light_projections[slot]);
+            maps.view_matrices[slot]->matrix = render::toVsg(light_views[slot]);
+        }
+        maps.frame = frame_number;
+        // Debug view 4 shows the raw torch shadow term (flagged by a negative strength).
+        if (graphics.post_debug == 4) maps.shadows.strength = -1.0f;
+        if (maps.shadows.count > 0) pass.light_shadow = &maps.shadows;
     }
     return cachedView(context, source, root, pass, std::move(viewport), frame_number);
 }

@@ -1,5 +1,6 @@
 #include "wiz8/render/graphics_settings.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <string>
@@ -27,7 +28,8 @@ GraphicsSettings GraphicsSettings::retail()
             .per_pixel_lighting = false,
             .alpha_to_coverage = false,
             .hdr = false,
-            .shadows = 0.0f};
+            .shadows = 0.0f,
+            .light_shadows = 0.0f};
 }
 
 GraphicsSettings GraphicsSettings::with(std::string_view spec) const
@@ -82,6 +84,15 @@ GraphicsSettings GraphicsSettings::with(std::string_view spec) const
             result.shadow_distance = parseFloat(value, result.shadow_distance);
         else if (name == "sun_tilt")
             result.sun_tilt = parseFloat(value, result.sun_tilt);
+        else if (name == "light_shadows")
+            result.light_shadows = parseFloat(value, result.light_shadows);
+        else if (name == "shadow_lights")
+            result.shadow_lights = std::clamp(
+                static_cast<int>(parseFloat(value, static_cast<float>(result.shadow_lights))), 0,
+                4);
+        else if (name == "light_shadow_size")
+            result.light_shadow_size =
+                static_cast<int>(parseFloat(value, static_cast<float>(result.light_shadow_size)));
         else if (name == "shoulder")
             result.shoulder = parseFloat(value, result.shoulder);
         else

@@ -20,13 +20,17 @@ struct GraphicsSettings {
     float exposure = 1.0f;
     float saturation = 1.08f;
     float contrast = 1.04f;
-    int post_debug = 0;         // 1 shows ambient occlusion, 2 bloom, 3 sun shadow
+    int post_debug = 0;         // 1 ambient occlusion, 2 bloom, 3 sun shadow, 4 torch shadow
     float shoulder = 0.8f;      // tone curve stays linear below this
     // Sun shadows on outdoor levels: how much of the sky light a shadow takes away; 0 disables.
     float shadows = 0.6f;
     int shadow_size = 4096; // shadow atlas edge in texels (four cascades)
     float shadow_distance = 40000.0f; // eye-space reach of the last cascade
     float sun_tilt = 25.0f; // degrees the sun's arc leans off the zenith
+    // Torch shadows: how much of a level light's baked glow a blocker takes away; 0 disables.
+    float light_shadows = 0.85f;
+    int shadow_lights = 4; // the nearest level lights that cast shadows (at most 4)
+    int light_shadow_size = 512; // cube face edge in texels
 
     static GraphicsSettings retail();
     // Applies `name=value` items (and `retail`) from `spec` over this value.
@@ -39,5 +43,11 @@ inline bool SunShadowsEnabled(const GraphicsSettings& settings)
     return settings.shadows > 0.0f && settings.hdr && settings.per_pixel_lighting;
 }
 
+// Torch shadows need the same HDR pipeline and per-pixel lighting as sun shadows.
+inline bool LightShadowsEnabled(const GraphicsSettings& settings)
+{
+    return settings.light_shadows > 0.0f && settings.shadow_lights > 0 && settings.hdr &&
+           settings.per_pixel_lighting;
+}
 // The process's settings: defaults overridden by the WIZ8_GFX environment variable.
 const GraphicsSettings& CurrentGraphicsSettings();

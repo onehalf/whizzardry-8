@@ -49,7 +49,17 @@ void main()
     float sun_shadow = wzSunShadow(v_eye, normal, has_normal);
     float shadow_strength = view.values[WZ_SHADOW_BASE].y;
     wz_sky_light = 1.0 - max(shadow_strength, 0.0) * sun_shadow;
-    WzLit lit = wzLight(v_eye, normal, v_material, v_alpha, v_color, v_diffuse_multiplier,
+    // Torch shadows take a light's baked share out of the vertex colour; a
+    // blocker never removes more than the strength allows.
+    vec4 vertex_color = v_color;
+    float light_strength = view.values[WZ_LIGHT_SHADOW_BASE].y;
+    if ((int(wzDraw(0).y) & WZ_HAS_COLORS) != 0) {
+        vec3 material_diffuse = wzShading(wzMaterialBase(v_material)).rgb;
+        vec3 loss = wzLightShadowLoss(v_eye, normal, has_normal, material_diffuse);
+        vertex_color.rgb = max(vertex_color.rgb - loss * abs(light_strength),
+                               vertex_color.rgb * (1.0 - abs(light_strength)));
+    }
+    WzLit lit = wzLight(v_eye, normal, v_material, v_alpha, vertex_color, v_diffuse_multiplier,
                         v_specular_multiplier);
     vec4 color = wzCombine(texture(material_texture, v_st0), lit.diffuse, lit.specular);
 #else
@@ -74,6 +84,7 @@ void main()
 #endif
 #ifdef WZ_PER_PIXEL
     if (shadow_strength < 0.0) color.rgb = vec3(1.0 - sun_shadow);
+    if (light_strength < 0.0) color.rgb = vec3(1.0 - wz_debug_light_shadow);
 #endif
     out_color = color;
 }

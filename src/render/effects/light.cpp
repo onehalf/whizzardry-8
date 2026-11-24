@@ -143,3 +143,10 @@ Light::Light(const Light& other) : Light()
         visible = false;
     }
 }
+
+float Light::bakedRange() const
+{
+    constexpr double denominator = 0.0019569471624266144;
+    constexpr double numerator = 0.9980430528375734;
+    return static_cast<float>(numerator / (opengl_attenuation.y * denominator));
+}

@@ -52,6 +52,7 @@
 #include "wiz8/render/material.h"
 #include "wiz8/render/mesh.h"
 #include "wiz8/render/mesh_instance.h"
+#include "wiz8/render/post_process.h"
 #include "wiz8/render/quality.h"
 #include "wiz8/render/renderer.h"
 #include "wiz8/render/texture.h"
@@ -370,7 +371,9 @@ static void RenderScene(WorldScene* scene, Camera3D* camera, const SceneFrame& f
                                          g_renderer->frameNumber());
     if (!picks.empty()) scene->pick(*render_view->camera, picks);
     for (const auto& shadow_view : scene->shadowViews(g_renderer->frameNumber()))
-        g_renderer->addShadowView(shadow_view);
+        g_renderer->addShadowView(render::ShadowAtlas::Sun, shadow_view);
+    for (const auto& shadow_view : scene->lightShadowViews(g_renderer->frameNumber()))
+        g_renderer->addShadowView(render::ShadowAtlas::Light, shadow_view);
     g_renderer->addSceneView(render_view);
 }
 

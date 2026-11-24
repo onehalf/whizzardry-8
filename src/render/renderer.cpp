@@ -313,7 +313,10 @@ Renderer::Impl::Impl(SDL_Window* platform_window) : platform_window(platform_win
         post = std::make_unique<render::PostProcess>(
             device, window->framebufferSamples(), window->depthFormat(), CurrentGraphicsSettings());
         post->resize(window->extent2D());
-        if (auto shadow_map = post->shadowMap()) context->setShadowMap(shadow_map);
+        if (auto shadow_map = post->shadowMap(render::ShadowAtlas::Sun))
+            context->setShadowMap(shadow_map);
+        if (auto shadow_map = post->shadowMap(render::ShadowAtlas::Light))
+            context->setLightShadowMap(shadow_map);
         commands->addChild(post->commands());
     }
     commands->addChild(render_graph);
@@ -574,9 +577,9 @@ void Renderer::addSceneView(vsg::ref_ptr<vsg::View> view)
     if (auto composite = impl->post->addView(std::move(view)))
         impl->frame_root->addChild(composite);
 }
-void Renderer::addShadowView(vsg::ref_ptr<vsg::View> view)
+void Renderer::addShadowView(render::ShadowAtlas atlas, vsg::ref_ptr<vsg::View> view)
 {
-    if (impl->post) impl->post->addShadowView(std::move(view));
+    if (impl->post) impl->post->addShadowView(atlas, std::move(view));
 }
 void Renderer::prepareOverlay(OverlayQuad& quad)
 {

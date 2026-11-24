@@ -87,6 +87,28 @@ struct ShadowCascades {
     std::array<glm::mat4, max_cascades> eye_to_atlas{};
 };
 
+// Torch shadows for one view, in that view's eye space. Level lights are baked
+// into vertex colours; for the few nearest ones the renderer keeps a cube shadow
+// map (one atlas row of six faces per light) and takes the light's baked share
+// away where a blocker hides it.
+struct LightShadows {
+    static constexpr int max_lights = 4;
+    // Cube faces in atlas column order: +x, -x, +y, -y, +z, -z (world axes).
+    static constexpr int faces = 6;
+    struct Shadowed {
+        glm::vec3 eye_position{0};
+        float range = 0;          // eye units; the baked share is zero beyond it
+        glm::vec3 color{0};       // diffuse colour x intensity x brightness, as baked
+        float texel_tangent = 0;  // tangent of one face texel's angle
+        std::array<glm::mat4, faces> eye_to_atlas{};
+    };
+    int count = 0;
+    float strength = 0;
+    glm::vec2 atlas_texel{0}; // 1 / atlas width, 1 / atlas height
+    glm::mat3 eye_to_world{1};
+    std::array<Shadowed, max_lights> lights{};
+};
+
 // The scene-pass inputs of one submission: frame inputs, lighting, fog colour,
 // depth cue and light exclusion. A scene pass builds one and each
 // drawable adjusts its own copy; the renderer keeps none of it.
@@ -101,4 +123,6 @@ struct ScenePass {
     std::uint32_t exclusion_mask = 0;
     // Sun shadows the view samples, or null.
     const ShadowCascades* shadow = nullptr;
+    // Torch shadows the view samples, or null.
+    const LightShadows* light_shadow = nullptr;
 };

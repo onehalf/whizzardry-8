@@ -179,6 +179,8 @@ public:
     bool isNamed() const { return !name.empty() && name != "anonymous"; }
     bool visible = true;
     bool bake_into_mesh = false;
+    // How far the vertex-light bake reaches from this light (linear attenuation).
+    float bakedRange() const;
     Transform3D transform;
     WorldScene* scene = nullptr; // Borrowed world for animation and named queries.
     vsg::ref_ptr<vsg::Node> render_node;

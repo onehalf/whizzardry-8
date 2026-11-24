@@ -1008,3 +1008,20 @@ TEST_CASE("camp-spells", "[runtime]")
 {
     RunScenario(CampSpellsScenario);
 }
+
+/* Torch shadows: the Monastery door in its courtyard, flanked by two torches in
+   alcoves. Their baked glow reaches the stones and the door frame. The view
+   looks down so the flickering flames stay out of the golden. */
+TEST_CASE("dungeon-lights", "[runtime]")
+{
+    RunScenario([] {
+        GameHarness game(false);
+        StartPremadeGame(game);
+        CameraPose pose = GetWorld()->party.pose();
+        pose.position = {68680, 2000, 37500};
+        pose.orientation = {.yaw = 3.14159f, .pitch = 0.6f};
+        GetWorld()->party.restore(pose);
+        Settle(game, "settle");
+        ExpectScreen(game, "dungeon-lights");
+    });
+}

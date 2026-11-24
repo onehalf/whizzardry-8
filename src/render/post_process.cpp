@@ -279,23 +279,38 @@ PostProcess::PostProcess(vsg::ref_ptr<vsg::Device> device, VkSampleCountFlagBits
     : device_(std::move(device)), samples_(samples), depth_format_(depth_format),
       settings_(settings)
 {
-    if (!SunShadowsEnabled(settings_)) return;
-    const auto size = static_cast<std::uint32_t>(std::max(settings_.shadow_size, 64));
-    auto atlas =
-        makeImage(kShadowFormat, {size, size},
-                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
-    auto view = vsg::createImageView(device_.get(), atlas, VK_IMAGE_ASPECT_DEPTH_BIT);
-    shadow_graph_ = vsg::RenderGraph::create();
-    shadow_graph_->framebuffer =
-        vsg::Framebuffer::create(shadowPass(device_.get()), vsg::ImageViews{view}, size, size, 1);
-    shadow_graph_->renderArea = {{0, 0}, {size, size}};
-    shadow_graph_->viewportState = vsg::ViewportState::create(VkExtent2D{size, size});
-    shadow_graph_->windowResizeHandler = {};
-    // Set by hand: VSG takes an attachment for depth only by an attachment-optimal final layout.
-    shadow_graph_->clearValues.resize(1);
-    shadow_graph_->clearValues[0].depthStencil = {1.0f, 0};
-    shadow_info_ = vsg::ImageInfo::create(makeSampler(VK_FILTER_NEAREST), view,
-                                          VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    const bool sun = SunShadowsEnabled(settings_), light = LightShadowsEnabled(settings_);
+    if (!sun && !light) return;
+    const auto pass = shadowPass(device_.get());
+    const auto make = [&](ShadowAtlas kind, std::uint32_t width, std::uint32_t height) {
+        auto atlas =
+            makeImage(kShadowFormat, {width, height},
+                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+        auto view = vsg::createImageView(device_.get(), atlas, VK_IMAGE_ASPECT_DEPTH_BIT);
+        auto& target = shadows_[static_cast<std::size_t>(kind)];
+        target.graph = vsg::RenderGraph::create();
+        target.graph->framebuffer =
+            vsg::Framebuffer::create(pass, vsg::ImageViews{view}, width, height, 1);
+        target.graph->renderArea = {{0, 0}, {width, height}};
+        target.graph->viewportState = vsg::ViewportState::create(VkExtent2D{width, height});
+        target.graph->windowResizeHandler = {};
+        // Set by hand: VSG takes an attachment for depth only by an attachment-optimal final
+        // layout.
+        target.graph->clearValues.resize(1);
+        target.graph->clearValues[0].depthStencil = {1.0f, 0};
+        target.info = vsg::ImageInfo::create(makeSampler(VK_FILTER_NEAREST), view,
+                                             VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+    };
+    if (sun) {
+        const auto size = static_cast<std::uint32_t>(std::max(settings_.shadow_size, 64));
+        make(ShadowAtlas::Sun, size, size);
+    }
+    if (light) {
+        // One row of six cube faces per shadowed light.
+        const auto face = static_cast<std::uint32_t>(std::max(settings_.light_shadow_size, 16));
+        make(ShadowAtlas::Light, face * 6,
+             face * static_cast<std::uint32_t>(settings_.shadow_lights));
+    }
 }
 
 void PostProcess::frameSubmitted()
@@ -304,10 +319,11 @@ void PostProcess::frameSubmitted()
     shadow_ready_ = shadow_ready_ || shadow_recorded_;
 }
 
-void PostProcess::addShadowView(vsg::ref_ptr<vsg::View> view)
+void PostProcess::addShadowView(ShadowAtlas atlas, vsg::ref_ptr<vsg::View> view)
 {
-    if (!shadow_graph_) return;
-    shadow_views_.push_back(std::move(view));
+    auto& target = shadows_[static_cast<std::size_t>(atlas)];
+    if (!target.graph) return;
+    target.views.push_back(std::move(view));
     buildFrameCommands();
 }
 
@@ -518,7 +534,7 @@ void PostProcess::resize(VkExtent2D extent)
 void PostProcess::beginFrame(const glm::vec4& clear)
 {
     views_.clear();
-    shadow_views_.clear();
+    for (auto& target : shadows_) target.views.clear();
     shadow_recorded_ = false;
     if (targets_) setClearValues(*targets_->scene, clear);
     buildFrameCommands();
@@ -592,11 +608,12 @@ vsg::ref_ptr<vsg::View> PostProcess::addView(vsg::ref_ptr<vsg::View> view)
 void PostProcess::buildFrameCommands()
 {
     root_->children.clear();
-    // The atlas is bound to every world view, so it is cleared into its
+    // The atlases are bound to every world view, so each is cleared into its
     // sampled layout once even before any view casts into it.
-    if (shadow_graph_ && (!shadow_views_.empty() || !shadow_ready_)) {
-        shadow_graph_->children.assign(shadow_views_.begin(), shadow_views_.end());
-        root_->addChild(shadow_graph_);
+    for (auto& target : shadows_) {
+        if (!target.graph || (target.views.empty() && shadow_ready_)) continue;
+        target.graph->children.assign(target.views.begin(), target.views.end());
+        root_->addChild(target.graph);
         shadow_recorded_ = true;
     }
     if (!targets_ || views_.empty()) return;

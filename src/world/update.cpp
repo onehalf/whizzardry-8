@@ -49,9 +49,6 @@
 #include "wiz8/world/environment.h"
 #include "wiz8/world/world.h"
 
-constexpr double kLightRangeAttenuationDenominator = 0.0019569471624266144;
-constexpr double kLightRangeAttenuationNumerator = 0.9980430528375734;
-
 void World::updateMonsters()
 {
     if (monster_retirements_) throw std::logic_error("recursive monster update");
@@ -145,9 +142,7 @@ bool BakeInstanceVertexLighting(MeshInstance* instance, std::span<Light* const> 
         const auto box = mesh->getBounds().box.transformed(world);
         for (const auto* light : lights) {
             if (!light || SDL_strncasecmp(light->getName().c_str(), "Sun", 3) == 0) continue;
-            const float range = static_cast<float>(
-                kLightRangeAttenuationNumerator /
-                (light->opengl_attenuation.y * kLightRangeAttenuationDenominator));
+            const float range = light->bakedRange();
             const auto position = glm::vec3(light->worldMatrix()[3]);
             if (!box.overlaps({position - range, position + range})) continue;
             mesh->flags |= W8_MESH_VERTEX_LIGHTING_DIRTY;

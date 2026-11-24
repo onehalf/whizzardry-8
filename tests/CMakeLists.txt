@@ -195,7 +195,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "LP_NUM_THREADS=1")
     # Every enhancement stays on, but software rendering 8x multisampled HDR
     # targets on one thread pushes long scenarios past their wall-clock limits.
-    list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "WIZ8_GFX=msaa=2,shadow_size=1024")
+    list(APPEND WIZ8_GRAPHICS_TEST_ENVIRONMENT "WIZ8_GFX=msaa=2,shadow_size=1024,light_shadow_size=128")
 endif()
 add_test(NAME native_gpu_rendering COMMAND native_gpu_rendering_test)
 set_tests_properties(native_gpu_rendering PROPERTIES
@@ -271,7 +271,7 @@ set(WIZ8_RUNTIME_TEST_ENVIRONMENT ${WIZ8_GRAPHICS_TEST_ENVIRONMENT} "SDL_AUDIO_D
     "WIZ8_RUNTIME_SAVE_FIXTURE=${WIZ8_RUNTIME_SAVE_FIXTURE}"
     "WIZ8_RUNTIME_DOWNLOADS=${WIZ8_DOWNLOAD_CACHE}"
     "WIZ8_NATIVE_EXAMPLES=${PROJECT_SOURCE_DIR}/examples/native")
-foreach(scenario video video-seen main-menu-ui formation-ui game-start resource-lifecycle inventory-chest camp-spells quick-save combat npc-dialogue load-game retail-save import-vitalia import-no-vitalia import-umpani import-trang random-play menu-save)
+foreach(scenario video video-seen main-menu-ui formation-ui game-start resource-lifecycle inventory-chest camp-spells dungeon-lights quick-save combat npc-dialogue load-game retail-save import-vitalia import-no-vitalia import-umpani import-trang random-play menu-save)
     # A fixed seed makes the game's random rolls repeatable.
     add_test(NAME runtime_${scenario} COMMAND native_runtime_test ${scenario} --rng-seed 1)
     set_tests_properties(runtime_${scenario} PROPERTIES

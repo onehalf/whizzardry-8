@@ -12,7 +12,8 @@ struct SDL_Surface;
 struct OverlayQuad;
 namespace render {
 class RenderContext;
-}
+enum class ShadowAtlas : std::uint8_t;
+} // namespace render
 
 // SDL owns the platform window. VSG owns its Vulkan surface, device, views,
 // graphics resources and presentation. A completed frame is the retirement
@@ -39,8 +40,8 @@ public:
     // Adds a sky or world view: through the HDR post-processing pipeline when
     // it is enabled, otherwise straight into the window pass like addView.
     void addSceneView(vsg::ref_ptr<vsg::View> view);
-    // A sun shadow cascade view, drawn into the shadow atlas before the scene.
-    void addShadowView(vsg::ref_ptr<vsg::View> view);
+    // A sun cascade or torch cube face view, drawn into its shadow atlas before the scene.
+    void addShadowView(render::ShadowAtlas atlas, vsg::ref_ptr<vsg::View> view);
     void prepareOverlay(OverlayQuad& quad);
     void addOverlay(vsg::ref_ptr<vsg::Node> node);
     void drawOverlayQuad(OverlayQuad& quad);

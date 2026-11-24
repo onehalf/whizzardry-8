@@ -10,7 +10,9 @@ layout(std140, set = 3, binding = 0) uniform Batch {
 } batch;
 
 #define WZ_SHADOW_BASE 3
-#define WZ_LIGHT_BASE 22
+#define WZ_LIGHT_SHADOW_BASE 22
+#define WZ_LIGHT_SHADOW_VEC4S 26
+#define WZ_LIGHT_BASE 130
 #define WZ_LIGHT_VEC4S 8
 #define WZ_FOG_BASE int(view.values[2].w)
 #define WZ_MATERIAL_BASE (WZ_FOG_BASE + int(view.values[2].y))

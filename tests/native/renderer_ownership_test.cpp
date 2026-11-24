@@ -363,7 +363,7 @@ TEST_CASE("Cached views retain compiled resources while camera and scene inputs 
     // when additional view records need more space.
     geometry->indexCount = 6;
     // Enough planes to pass the view block's power-of-two capacity.
-    for (int index = 0; index < 16; ++index)
+    for (int index = 0; index < 128; ++index)
         scene.clip_planes.push_back(std::make_unique<ClipPlane>());
     REQUIRE(scene.createView(context, &camera, {}, viewport, 3) == view);
     REQUIRE(view->viewDependentState == state);

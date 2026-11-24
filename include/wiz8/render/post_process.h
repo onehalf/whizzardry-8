@@ -1,5 +1,8 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -14,6 +17,9 @@
 struct GraphicsSettings;
 
 namespace render {
+
+// The depth atlases shadow views draw into: sun cascades, and torch cube faces.
+enum class ShadowAtlas : std::uint8_t { Sun, Light };
 
 /* The HDR world pipeline. Scene views (sky and world) render into a
    multisampled floating-point target; compute passes derive ambient occlusion
@@ -41,10 +47,13 @@ public:
     vsg::ref_ptr<vsg::View> addView(vsg::ref_ptr<vsg::View> view);
     // Called once a frame's commands have been submitted.
     void frameSubmitted();
-    // Adds a sun shadow cascade view for this frame.
-    void addShadowView(vsg::ref_ptr<vsg::View> view);
-    // The sampled shadow atlas, or null when sun shadows are off.
-    vsg::ref_ptr<vsg::ImageInfo> shadowMap() const { return shadow_info_; }
+    // Adds a view that draws into a shadow atlas this frame.
+    void addShadowView(ShadowAtlas atlas, vsg::ref_ptr<vsg::View> view);
+    // The sampled shadow atlas, or null when those shadows are off.
+    vsg::ref_ptr<vsg::ImageInfo> shadowMap(ShadowAtlas atlas) const
+    {
+        return shadows_[static_cast<std::size_t>(atlas)].info;
+    }
 
 private:
     struct Targets;
@@ -57,9 +66,13 @@ private:
     vsg::ref_ptr<vsg::Group> root_ = vsg::Group::create();
     std::unique_ptr<Targets> targets_;
     std::vector<vsg::ref_ptr<vsg::View>> views_;
-    std::vector<vsg::ref_ptr<vsg::View>> shadow_views_;
-    vsg::ref_ptr<vsg::RenderGraph> shadow_graph_;
-    vsg::ref_ptr<vsg::ImageInfo> shadow_info_;
+    // One depth atlas per kind of shadow; both draw through one render pass.
+    struct ShadowTarget {
+        std::vector<vsg::ref_ptr<vsg::View>> views;
+        vsg::ref_ptr<vsg::RenderGraph> graph;
+        vsg::ref_ptr<vsg::ImageInfo> info;
+    };
+    std::array<ShadowTarget, 2> shadows_;
     bool shadow_ready_ = false;
     bool shadow_recorded_ = false;
     bool ambient_occlusion_ = false;

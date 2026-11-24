@@ -72,7 +72,15 @@ constexpr std::size_t material_vectors = 6;
 // View header: depth cue, fog colour, counts, then the sun shadow block.
 constexpr std::size_t shadow_base = 3;
 constexpr std::size_t shadow_vectors = 3 + ShadowCascades::max_cascades * 4;
-constexpr std::size_t light_base = shadow_base + shadow_vectors;
+// Torch shadows: header, eye-to-world rotation, then per light its position,
+// colour and six face matrices.
+constexpr std::size_t light_shadow_base = shadow_base + shadow_vectors;
+constexpr std::size_t light_shadow_vectors_each = 2 + LightShadows::faces * 4;
+constexpr std::size_t light_shadow_vectors =
+    4 + LightShadows::max_lights * light_shadow_vectors_each;
+constexpr std::size_t light_base = light_shadow_base + light_shadow_vectors;
+// world_blocks.glsl repeats these.
+static_assert(light_shadow_base == 22 && light_shadow_vectors_each == 26 && light_base == 130);
 
 std::uint32_t disabledChannels(std::uint32_t shader)
 {
@@ -125,7 +133,8 @@ RenderContext::RenderContext(VkExtent2D extent, int samples)
     constexpr auto storage = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     view_layout = vsg::DescriptorSetLayout::create(
         Bindings{{0, storage, 1, vertex | fragment, nullptr},
-                 {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fragment, nullptr}});
+                 {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fragment, nullptr},
+                 {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, fragment, nullptr}});
     // Per-pixel lighting evaluates the material and light rules in the fragment stage.
     instance_layout =
         vsg::DescriptorSetLayout::create(Bindings{{0, uniform, 1, vertex | fragment, nullptr}});
@@ -159,12 +168,13 @@ RenderContext::RenderContext(VkExtent2D extent, int samples)
     auto pixel = vsg::ubvec4Array2D::create(1, 1, vsg::Data::Properties{VK_FORMAT_R8G8B8A8_UNORM});
     pixel->at(0, 0) = vsg::ubvec4(255, 255, 255, 255);
     white = vsg::ImageInfo::create(vsg::Sampler::create(), pixel);
-    // Depth 1 is the far plane of every cascade: nothing is in shadow.
+    // Depth 1 is the far plane of every cascade and cube face: nothing is in shadow.
     auto far = vsg::floatArray2D::create(1, 1, vsg::Data::Properties{VK_FORMAT_R32_SFLOAT});
     far->at(0, 0) = 1.0f;
     auto nearest = vsg::Sampler::create();
     nearest->magFilter = nearest->minFilter = VK_FILTER_NEAREST;
     shadow_map = vsg::ImageInfo::create(nearest, far);
+    light_shadow_map = shadow_map;
 }
 
 vsg::ref_ptr<vsg::BindGraphicsPipeline>
@@ -286,7 +296,10 @@ vsg::ref_ptr<vsg::BindDescriptorSet> RenderContext::descriptor(std::uint32_t set
     const auto type =
         set == 1 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     vsg::Descriptors descriptors{vsg::DescriptorBuffer::create(data, 0, 0, type)};
-    if (set == 0) descriptors.push_back(vsg::DescriptorImage::create(shadow_map, 1));
+    if (set == 0) {
+        descriptors.push_back(vsg::DescriptorImage::create(shadow_map, 1));
+        descriptors.push_back(vsg::DescriptorImage::create(light_shadow_map, 2));
+    }
     return vsg::BindDescriptorSet::create(
         VK_PIPELINE_BIND_POINT_GRAPHICS, layout, set,
         vsg::DescriptorSet::create(descriptor_layout, std::move(descriptors)));
@@ -336,6 +349,21 @@ std::vector<glm::vec4> packView(const ScenePass& pass, std::span<const glm::vec4
             for (int column = 0; column < 4; ++column)
                 result[shadow_base + 3 + cascade * 4 + column] =
                     shadow->eye_to_atlas[cascade][column];
+    }
+    if (const auto* shadow = pass.light_shadow; shadow && shadow->count > 0) {
+        result[light_shadow_base] = {static_cast<float>(shadow->count), shadow->strength,
+                                     shadow->atlas_texel.x, shadow->atlas_texel.y};
+        for (int column = 0; column < 3; ++column)
+            result[light_shadow_base + 1 + column] = glm::vec4(shadow->eye_to_world[column], 0);
+        for (int light = 0; light < shadow->count; ++light) {
+            const auto& source = shadow->lights[light];
+            const auto base = light_shadow_base + 4 + light * light_shadow_vectors_each;
+            result[base] = glm::vec4(source.eye_position, source.range);
+            result[base + 1] = glm::vec4(source.color, source.texel_tangent);
+            for (int face = 0; face < LightShadows::faces; ++face)
+                for (int column = 0; column < 4; ++column)
+                    result[base + 2 + face * 4 + column] = source.eye_to_atlas[face][column];
+        }
     }
     for (std::size_t layer = 0; layer < pass.fogs.size(); ++layer) {
         const auto& fog = *pass.fogs[layer];
