@@ -1060,6 +1060,26 @@ TEST_CASE("sky", "[runtime]")
     });
 }
 
+/* Level travel keeps the outgoing world alive while the destination loads.
+   Monastery2 shares the bat with Monastery1: its damage stages already hold
+   the MLS skin swaps, which once failed as missing textures. Bayjin1 has no
+   sky: the sky reuse test once normalized its empty sky path and threw. */
+TEST_CASE("level-travel", "[runtime]")
+{
+    RunScenario([] {
+        GameHarness game(false);
+        StartPremadeGame(game);
+        const int start = GetLoadedLevelID();
+        REQUIRE(CurrentGame().level.sky);
+        for (const int level : {9, 2, start}) {
+            REQUIRE(CurrentGame().travelToLevel(level, 0));
+            CHECK(GetLoadedLevelID() == level);
+            CHECK(bool(CurrentGame().level.sky) == (level != 2));
+            game.frame();
+        }
+    });
+}
+
 namespace {
 /* A demo location for screenshots, from WIZ8_SCENE:
    `level=<id>,entrance=<n>` or `level=<id>,pos=<x>;<y>;<z>`, plus optional

@@ -511,9 +511,11 @@ static bool TravelToLevel(Game& game, int requested_level, int entrance, bool re
     ambient_path.replace_extension(".SCF");
     ReadAmbientSoundListFile(*replacement, wiz8::path_to_utf8(ambient_path).c_str());
     Level& current = game.level;
+    // A level without a sky (Bayjin, Marten1, ...) has an empty sky path.
     const bool reuse_sky =
-        current.sky && current.sky->source_path ==
-                           wiz8::normalize_asset_path(level_info.sky_path).generic_string();
+        current.sky && !level_info.sky_path.empty() &&
+        current.sky->source_path ==
+            wiz8::normalize_asset_path(level_info.sky_path).generic_string();
     auto replacement_sky = reuse_sky ? nullptr : PrepareSkyWorld(game, level_info.sky_path);
     if (!reuse_sky && !level_info.sky_path.empty() && !replacement_sky) return false;
     if (current.primary) game.left_levels.store(LevelState::capture(game));

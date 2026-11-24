@@ -288,14 +288,17 @@ bool Mesh::replaceSkinTexture(int table, std::string_view old_name,
     bool changed = false;
     for (std::size_t polygon = 0; polygon < skin->textures.size(); ++polygon) {
         const auto& texture = skin->textures[polygon];
-        if (!texture || (texture->source_path.empty() && !texture->playback) ||
-            !MeshNameEquals(texture->getName(), old_name))
+        if (!texture || (texture->source_path.empty() && !texture->playback)) continue;
+        /* A damage stage on a mesh shared with a species another world loaded
+           already holds the swap; the species' MLS then repeats it. */
+        if (MeshNameEquals(texture->getName(), replacement->getName())) {
+            matched = true;
             continue;
-        matched = true;
-        if (texture != replacement) {
-            skin->textures[polygon] = replacement;
-            changed = true;
         }
+        if (!MeshNameEquals(texture->getName(), old_name)) continue;
+        matched = true;
+        skin->textures[polygon] = replacement;
+        changed = true;
     }
     if (changed) {
         skin->active_polygons.reset();
