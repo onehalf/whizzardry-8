@@ -283,6 +283,7 @@ void GameHarness::frame()
     if (!w8_native::audio_render_for_test(audio.data(), audio.size() / 2))
         FailStep("audio", "offline mixer did not advance");
     ++frames_;
+    frame_world_ = GetWorld();
     g_runtime_test_hooks.clock_us += frame_us;
     check_modal_visible();
     if (frames_ % 120 == 0)
@@ -527,6 +528,12 @@ void GameHarness::save_failure_frames()
     failure_frame_ = frames_;
     const fs::path directory = ArtifactDirectory();
     if (directory.empty()) return;
+    /* A capture renders the graph the last frame prepared. After a travel with
+       no frame since, that graph still refers to the level the travel freed. */
+    if (GetWorld() != frame_world_) {
+        std::fprintf(stderr, "runtime: no failure frame: the level changed after the last frame\n");
+        return;
+    }
     const std::string stem = "failure-frame" + std::to_string(frames_);
     std::fprintf(stderr, "runtime: the game's frame at the failure:\n");
     SaveImage(directory / (stem + ".png"), PresentedFrame(), SCREEN_WIDTH);

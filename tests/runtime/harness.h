@@ -22,6 +22,8 @@
 
 #include "mgs_commands.h"
 #include "scoped_asset_roots.h"
+
+struct World;
 #include "temporary_directory.h"
 #include "wiz8/application.h"
 #include "wiz8/local_screens/MGSKeyboard.h"
@@ -206,6 +208,8 @@ private:
     SDL_Window* window_ = nullptr;
     unsigned long frames_ = 0;
     std::optional<unsigned long> failure_frame_;
+    // The world the last frame prepared the render graph for.
+    const World* frame_world_ = nullptr;
 };
 
 /* The CPU frame buffer (the 2D interface) as XRGB pixels; empty on failure. */
