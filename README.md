@@ -1,3 +1,65 @@
+# Whizzardry 8: `engine/max` fork
+
+This is a personal fork of [agluszak/whizzardry-8](https://github.com/agluszak/whizzardry-8).
+The `engine/max` branch adds a modern renderer and fixes on top of upstream `main`.
+Everything below the line is the upstream README, which still applies.
+
+## What this fork does
+
+Upstream keeps the original look of Wizardry 8. This fork asks a different question:
+how good can the same world look with a modern renderer? The goal is **maximalist but
+cohesive**: strong effects, tuned so the game still looks like Wizardry 8.
+
+Done on `engine/max`:
+
+- **Enhanced renderer**: 8x MSAA, 16x anisotropic filtering, alpha-to-coverage
+  for foliage, per-pixel lighting.
+- **HDR pipeline**: floating-point scene target, SSAO, bloom and a tone curve.
+- **Sun shadows**: cascaded shadow maps from the sky's sun and moon.
+- **Torch shadows**: cube shadow maps for the nearest baked level lights.
+- **Brightness slider** in Options → Graphics.
+- **Fixes** for sky far-clip, monster shadow stripes, HUD repaints, the game cursor,
+  chest picker backdrops and level travel.
+
+Planned (not done yet):
+
+- Widescreen (Hor+) view with a UI layout made for wide screens.
+- Detail textures, texture upscale and a sharp UI filter.
+- Optional fan fixes from the community patches (1.261 and 1.28), off by default.
+  Balance changes stay out.
+
+## Upstream first
+
+Bug fixes go upstream as small pull requests when they make sense there:
+
+- [#667](https://github.com/agluszak/whizzardry-8/pull/667) chest picker backdrops
+- [#668](https://github.com/agluszak/whizzardry-8/pull/668) game cursor
+- [#669](https://github.com/agluszak/whizzardry-8/pull/669) HUD overlay repaints
+- [#670](https://github.com/agluszak/whizzardry-8/pull/670) sky far-clip
+
+The renderer work stays on this branch. Upstream can cherry-pick any part of it.
+This fork's `main` mirrors upstream `main`; the `fix/*` branches are the PR heads.
+
+## Graphics settings
+
+The enhanced renderer is on by default. Set `WIZ8_GFX` to a comma-separated list to
+change it, or use `retail` to get the original look:
+
+```sh
+WIZ8_ASSET_ROOT=/path/to/prepared-assets WIZ8_GFX=retail ./run.sh
+WIZ8_ASSET_ROOT=/path/to/prepared-assets WIZ8_GFX=msaa=4,ssao=0,bloom=0 ./run.sh
+```
+
+Keys: `msaa`, `aniso`, `ppl`, `hdr`, `lightmax`, `ssao`, `ssao_radius`, `bloom`,
+`bloom_threshold`, `exposure`, `saturation`, `contrast`, `shoulder`, `shadows`,
+`shadow_size`, `shadow_distance`, `sun_tilt`, `light_shadows`, `shadow_lights`,
+`light_shadow_size`, `debug` (1 = AO buffer, 2 = bloom buffer, 3 = shadow cascades).
+See `src/render/graphics_settings.cpp` for defaults.
+
+You still need your own retail copy of Wizardry 8. Build and run the same way as upstream (below).
+
+---
+
 # Whizzardry 8
 
 Whizzardry 8 is a work-in-progress port of [Wizardry 8](https://en.wikipedia.org/wiki/Wizardry_8) to modern, 64-bit Linux, macOS and Windows.
